@@ -1,0 +1,65 @@
+[
+  {
+    "id": "1",
+    "email": "s@s",
+    "firstName": "Saira ",
+    "lastName": "Exmaple",
+    "password": "",
+    "activated": true,
+    "role": "student"
+  },
+  {
+    "id": "2",
+    "email": "1@1",
+    "firstName": "John",
+    "lastName": "Doe",
+    "password": "",
+    "activated": true,
+    "role": "student"
+  },
+  {
+    "id": "6",
+    "email": "1@2",
+    "firstName": "John",
+    "lastName": "Doe",
+    "password": "",
+    "activated": true,
+    "role": "professor"
+  },
+  {
+    "id": "3",
+    "email": "medohish2003@gmail.com",
+    "firstName": "Mohamed",
+    "lastName": "Hesham",
+    "password": "12345678",
+    "activated": false,
+    "role": "student"
+  },
+  {
+    "id": "4",
+    "email": "elhowera@gmail.com",
+    "firstName": "Elfares",
+    "lastName": "Howera",
+    "password": "",
+    "activated": true,
+    "role": "admin"
+  },
+  {
+    "id": "5",
+    "email": "medohish2003@gmail.com",
+    "firstName": "Mohammed ",
+    "lastName": "Hesham",
+    "password": "",
+    "activated": false,
+    "role": "student"
+  },
+  {
+    "id": "6",
+    "email": "mahmoudessam0123@gmail.com",
+    "firstName": "Mahmoud ",
+    "lastName": "Essam",
+    "password": "",
+    "activated": false,
+    "role": "student"
+  }
+]

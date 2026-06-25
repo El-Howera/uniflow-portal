@@ -1,0 +1,619 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ──────────────────────────────────────────────────────────────────────
+   THEME — Dark mode is default. The .dark class on <html> is the toggle
+   (managed by AppContext.tsx). Light mode is the "no .dark" state.
+
+   Strategy: instead of rewriting every `bg-white/5` instance across the
+   codebase, we redefine what those glass utilities MEAN in light mode
+   via the overrides below. The dark-mode rendering is unchanged.
+   ────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Light mode (default) — true glass-morphism over a pure-white canvas
+     with soft purple/pink/blue gradient blobs (see LightModeBackground.tsx).
+     Cards are LOW-opacity white so the colored blobs visibly bleed through
+     each card — that's what makes the surface read as polished glass, not
+     opaque white plastic. */
+  --canvas-bg: #FFFFFF;
+  --canvas-text: #1A1530;
+
+  /* Borders — UniFlow purple lines. Slightly stronger now that cards are
+     low-opacity (the border is what defines the card silhouette). */
+  --glass-border-soft: rgba(106, 63, 244, 0.18);
+  --glass-border:      rgba(106, 63, 244, 0.28);
+  --glass-border-hi:   rgba(106, 63, 244, 0.40);
+
+  /* Inner wells (inputs, recessed panels) — faint purple inset, slightly
+     stronger than the card around them so they read as recessed depth. */
+  --glass-well-soft: rgba(106, 63, 244, 0.08);
+  --glass-well:      rgba(106, 63, 244, 0.13);
+  --glass-well-hi:   rgba(106, 63, 244, 0.20);
+
+  --scrollbar-track: #ECE4FF;
+}
+
+html.dark {
+  /* Dark mode — `--canvas-bg` is the ULTIMATE fallback color shown anywhere
+     the page renders no other content (Aurora canvas edges, safe-area
+     zones in PWA mode where iOS expects the page to paint). Set to vibrant
+     Aurora purple `#5A2AD4` so the home-indicator strip on iPhone 14 Pro
+     PWA reads as continuation of Aurora's atmosphere instead of a black
+     bar. Cards on top of body still use their own bg, so this color is
+     only seen where genuinely nothing else covers it. */
+  --canvas-bg: #5A2AD4;
+  --canvas-text: #E5E7EB;
+  --scrollbar-track: #2d2d2d;
+}
+
+body {
+  background: var(--canvas-bg);
+  color: var(--canvas-text);
+  @apply font-sans;
+}
+
+/* App-shell layout — lock html/body/root to the LARGEST possible viewport
+   (`100lvh` = large viewport height, always equals the maximum screen
+   space whether URL bar is collapsed or not; in iPhone PWA mode `lvh`
+   reliably includes the home indicator zone, unlike `dvh` which can
+   exclude it). `overflow: hidden` + `overscroll-behavior: none` kill any
+   document-level scrolling so touch-drag on fixed elements (the bubble
+   bar, the header) can't bubble up to scroll the document — only <main>
+   is the legitimate scroll surface.
+   `text-size-adjust: 100%` disables Mobile Safari's auto-text-zoom on
+   rotation / first-paint which otherwise renders as "page slightly
+   zoomed in" on iOS. */
+html, body, #root {
+  width: 100vw;
+  height: 100vh;
+  height: 100lvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  -moz-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Disable touch-pinch zoom at the CSS layer too — viewport meta handles
+     it but `touch-action: pan-x pan-y` belts-and-suspenders the gesture
+     handler so pinch is never even initiated. */
+  touch-action: pan-x pan-y;
+}
+
+/* iOS auto-zoom on input focus is now blocked by the viewport meta's
+   `user-scalable=no` + `maximum-scale=1`. A previous attempt set every
+   input to font-size:16px, which iOS-wide is the canonical fix, but it
+   inflated text-sm/text-xs inputs and broke tight layouts (GPA calc).
+   The viewport-only approach is enough on iPhone 14 Pro PWA + most
+   modern iOS WKWebViews. If a specific input still triggers zoom on a
+   user's device, add `text-base` (16px) to that input class list. */
+
+
+/* ──────────────────────────────────────────────────────────────────────
+   GLASS SURFACES — LIGHT MODE OVERRIDES
+   The codebase uses bg-white/5, bg-white/10, bg-white/20 ~1000 times to
+   build glass cards. In light mode these vanish (white on lavender). We
+   replace them with subtly tinted purple glass that keeps the same
+   visual hierarchy.
+
+   Dark mode keeps Tailwind's default rendering (literally bg with rgba
+   white at 5% / 10% / 20%) — nothing below applies under .dark.
+   ────────────────────────────────────────────────────────────────────── */
+
+/* Card surfaces — TRUE glass-morphism. Cards are LOW-opacity white with a
+   diagonal gradient (brighter top-left highlight → softer bottom-right)
+   that mimics light catching a polished glass surface. The colored
+   blobs in LightModeBackground.tsx visibly bleed through each card —
+   that's what makes it read as real glass, never opaque, never frosted. */
+html:not(.dark) .bg-white\/5 {
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.35) 0%,
+    rgba(255, 255, 255, 0.15) 100%) !important;
+}
+html:not(.dark) .bg-white\/10 {
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.48) 0%,
+    rgba(255, 255, 255, 0.22) 100%) !important;
+}
+html:not(.dark) .bg-white\/20 {
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.62) 0%,
+    rgba(255, 255, 255, 0.35) 100%) !important;
+}
+
+/* Borders — UniFlow purple */
+html:not(.dark) .border-white\/5  { border-color: var(--glass-border-soft) !important; }
+html:not(.dark) .border-white\/10 { border-color: var(--glass-border)      !important; }
+html:not(.dark) .border-white\/20 { border-color: var(--glass-border-hi)   !important; }
+
+/* Hover — bump the highlight end for a "polish catches more light" lift */
+html:not(.dark) .hover\:bg-white\/5:hover {
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.50) 0%,
+    rgba(255, 255, 255, 0.25) 100%) !important;
+}
+html:not(.dark) .hover\:bg-white\/10:hover {
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.62) 0%,
+    rgba(255, 255, 255, 0.35) 100%) !important;
+}
+html:not(.dark) .hover\:bg-white\/20:hover {
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.78) 0%,
+    rgba(255, 255, 255, 0.48) 100%) !important;
+}
+
+/* Inner wells — faint purple tint with subtle inverse gradient
+   (slightly darker at top) so inputs read as recessed inside the
+   glossy card surface. */
+html:not(.dark) .bg-black\/10 {
+  background: linear-gradient(180deg,
+    rgba(106, 63, 244, 0.10) 0%,
+    rgba(106, 63, 244, 0.05) 100%) !important;
+}
+html:not(.dark) .bg-black\/20 {
+  background: linear-gradient(180deg,
+    rgba(106, 63, 244, 0.16) 0%,
+    rgba(106, 63, 244, 0.09) 100%) !important;
+}
+html:not(.dark) .bg-black\/30 {
+  background: linear-gradient(180deg,
+    rgba(106, 63, 244, 0.22) 0%,
+    rgba(106, 63, 244, 0.14) 100%) !important;
+}
+
+/* Kill the frost. Heavy backdrop-blur is what makes light-mode cards look
+   matte/frosted; replace every Tailwind backdrop-blur utility with a tiny
+   2px refraction in light mode — just enough to feel glassy, not enough
+   to obliterate the colored blobs behind. Dark mode is untouched. */
+html:not(.dark) .backdrop-blur-sm,
+html:not(.dark) .backdrop-blur,
+html:not(.dark) .backdrop-blur-md,
+html:not(.dark) .backdrop-blur-lg,
+html:not(.dark) .backdrop-blur-xl,
+html:not(.dark) .backdrop-blur-2xl,
+html:not(.dark) .backdrop-blur-3xl,
+html:not(.dark) .backdrop-filter {
+  backdrop-filter: blur(2px) saturate(1.1) !important;
+  -webkit-backdrop-filter: blur(2px) saturate(1.1) !important;
+}
+
+/* Card arrows / icons that turn white on hover (correct in dark mode,
+   wrong on a light canvas). Flip to UniFlow purple in light mode so the
+   hover state is on-brand, not invisible white-on-white. */
+html:not(.dark) .group:hover .group-hover\:text-white {
+  color: #6A3FF4 !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   "Black" → canvas-text (#1A1530 / rgb 26 21 48) remap in light mode.
+   Pure #000 on a near-white canvas is the deepest-contrast pairing —
+   technically maximum legibility, but visually heavy: every line of body
+   text and every "black pill" picks up the full 21:1 contrast ratio and
+   the page reads as a wall of solid black. Swapping to the canvas-text
+   value already used by <body> (a desaturated deep-purple) drops to a
+   softer ~14:1 — still AAA — and makes the whole UI feel calmer + more
+   on-brand without breaking accessibility.
+
+   Dark mode is untouched (text-black is rare there, and bg-black is
+   intentional on the dark canvas).
+   ────────────────────────────────────────────────────────────────────── */
+html:not(.dark) .text-black           { color: var(--canvas-text) !important; }
+html:not(.dark) .bg-black             { background-color: var(--canvas-text) !important; }
+html:not(.dark) .ring-black           { --tw-ring-color: var(--canvas-text) !important; }
+html:not(.dark) .border-black         { border-color: var(--canvas-text) !important; }
+html:not(.dark) .fill-black           { fill: var(--canvas-text) !important; }
+html:not(.dark) .stroke-black         { stroke: var(--canvas-text) !important; }
+html:not(.dark) .placeholder-black::placeholder { color: var(--canvas-text) !important; }
+html:not(.dark) .divide-black > * + * { border-color: var(--canvas-text) !important; }
+html:not(.dark) .caret-black          { caret-color: var(--canvas-text) !important; }
+html:not(.dark) .accent-black         { accent-color: var(--canvas-text) !important; }
+/* Hover variants used in nav / button states. */
+html:not(.dark) .hover\:text-black:hover    { color: var(--canvas-text) !important; }
+html:not(.dark) .hover\:bg-black:hover      { background-color: var(--canvas-text) !important; }
+html:not(.dark) .group:hover .group-hover\:text-black { color: var(--canvas-text) !important; }
+/* Focus / active states. */
+html:not(.dark) .focus\:text-black:focus    { color: var(--canvas-text) !important; }
+html:not(.dark) .focus\:ring-black:focus    { --tw-ring-color: var(--canvas-text) !important; }
+
+/* ──────────────────────────────────────────────────────────────────────
+   "White" → canvas-text in light mode. Bare `text-white` / `border-white`
+   on cards that don't carry a paired `dark:` variant CAN render invisible
+   white-on-white in light mode. But bare `text-white` is also the
+   intentional color on buttons / badges with colored backgrounds (purple
+   gradient buttons, red status pills, etc.) — flipping those to dark
+   purple kills the contrast they're designed for.
+
+   Decision (2026-06-08): DON'T blanket-remap bare `text-white`. The real
+   bug was the OPACITY-TIER white text (text-white/40, /60, /80) used for
+   de-emphasized labels on glass cards — those become invisible at low
+   opacity on a white canvas. Those tiers are remapped below.
+
+   border-white / fill-white / stroke-white etc. (bare, no opacity) are
+   also rare on colored surfaces; safe to remap as canvas-text.
+
+   Dark mode is untouched — white text on the dark canvas is correct.
+   ────────────────────────────────────────────────────────────────────── */
+html:not(.dark) .border-white         { border-color: var(--canvas-text) !important; }
+html:not(.dark) .fill-white           { fill: var(--canvas-text) !important; }
+html:not(.dark) .stroke-white         { stroke: var(--canvas-text) !important; }
+html:not(.dark) .placeholder-white::placeholder { color: var(--canvas-text) !important; }
+html:not(.dark) .divide-white > * + * { border-color: var(--canvas-text) !important; }
+html:not(.dark) .caret-white          { caret-color: var(--canvas-text) !important; }
+
+/* Opacity tiers — `text-white/30`, `text-white/40`, `text-white/60`,
+   `text-white/80` are widely used for de-emphasized labels in dark mode.
+   In light mode they render at low-opacity white (invisible) so we swap
+   to corresponding low-opacity canvas-text (gray-purple) values. The
+   numbers below come from manually matching the contrast band each tier
+   produces on the dark canvas and re-pairing it on the light one. */
+html:not(.dark) .text-white\/20  { color: rgba(26, 21, 48, 0.40) !important; }
+html:not(.dark) .text-white\/25  { color: rgba(26, 21, 48, 0.45) !important; }
+html:not(.dark) .text-white\/30  { color: rgba(26, 21, 48, 0.50) !important; }
+html:not(.dark) .text-white\/35  { color: rgba(26, 21, 48, 0.55) !important; }
+html:not(.dark) .text-white\/40  { color: rgba(26, 21, 48, 0.60) !important; }
+html:not(.dark) .text-white\/50  { color: rgba(26, 21, 48, 0.65) !important; }
+html:not(.dark) .text-white\/60  { color: rgba(26, 21, 48, 0.70) !important; }
+html:not(.dark) .text-white\/70  { color: rgba(26, 21, 48, 0.75) !important; }
+html:not(.dark) .text-white\/80  { color: rgba(26, 21, 48, 0.80) !important; }
+html:not(.dark) .text-white\/90  { color: rgba(26, 21, 48, 0.88) !important; }
+
+/* Border-white opacity tiers — used for subtle dividers + outlines.
+   In light mode, low-opacity white is invisible on the lighter canvas. */
+html:not(.dark) .border-white\/5  { border-color: rgba(26, 21, 48, 0.08) !important; }
+html:not(.dark) .border-white\/15 { border-color: rgba(26, 21, 48, 0.15) !important; }
+html:not(.dark) .border-white\/30 { border-color: rgba(26, 21, 48, 0.25) !important; }
+html:not(.dark) .border-white\/40 { border-color: rgba(26, 21, 48, 0.30) !important; }
+html:not(.dark) .border-white\/50 { border-color: rgba(26, 21, 48, 0.35) !important; }
+
+/* Higher black-opacity tiers — used as modal scrims / strong overlays.
+   The existing block above only covered /10 /20 /30. /40+ are the
+   "darken everything behind this dialog" use cases. We keep them as
+   dark scrims in light mode too (a modal needs a darkening effect even
+   on a light canvas — same UX, different opacity). */
+html:not(.dark) .bg-black\/40 { background-color: rgba(0, 0, 0, 0.30) !important; }
+html:not(.dark) .bg-black\/50 { background-color: rgba(0, 0, 0, 0.40) !important; }
+html:not(.dark) .bg-black\/60 { background-color: rgba(0, 0, 0, 0.45) !important; }
+html:not(.dark) .bg-black\/70 { background-color: rgba(0, 0, 0, 0.50) !important; }
+
+/* bg-white solid — rare but appears in a few places as a "card-on-card"
+   surface. In dark mode bg-white is intentional contrast; in light mode
+   we keep it as actual white. No remap needed for bare bg-white (already
+   correct in both modes); included here as a documentation anchor. */
+
+/* Hover / focus variants for bare text-white are intentionally NOT
+   remapped — same reason as the bare `text-white` decision above. Most
+   hover:text-white usages are on buttons with colored backgrounds where
+   white stays the right color. The `group-hover:text-white` case is
+   handled separately at the top of this block — it intentionally turns
+   to UniFlow purple in light mode for nav arrow hovers (those sit on
+   the glass canvas, not on a button). */
+
+/* Electron custom title bar — theme-aware (see ElectronTitleBar.tsx).
+   The bar background uses var(--canvas-bg) so it matches the app canvas in
+   both themes; the window-control glyphs use text-white/* classes which the
+   global light-mode remap above converts to dark canvas-text, giving correct
+   contrast in each theme (white-on-dark in dark mode, dark-on-light in light
+   mode). No exemption is needed — the bar follows the theme like everything else. */
+
+/* Custom Scrollbar Styling — auto-hiding overlay style.
+   Default state: scrollbars are INVISIBLE (transparent track + thumb)
+   but the gutter is still present so layout doesn't shift. They appear
+   in the UniFlow purple ONLY when the user is actively interacting with
+   the scrollable container:
+     - Hover the container (desktop)         → thumb fades in
+     - Scrolling (`html.is-scrolling` flag)  → thumb fades in everywhere
+     - macOS / iOS Safari                    → native overlay auto-hide
+                                              (we layer ours on top of it)
+   The `is-scrolling` flag is toggled by a tiny scroll-event listener
+   added in App.tsx (or the entry file) — it adds the class on any
+   `scroll` event and removes it ~700 ms after activity stops.
+   Firefox: `scrollbar-color` only supports two colors; we set the thumb
+   transparent by default and swap to brand purple inside the same
+   :hover / :is-scrolling rules.
+   The thumb keeps a 4 px radius (matching the previous design) so the
+   visual identity is unchanged — just the visibility cadence is. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.25s ease;
+}
+
+/* Webkit browsers (Chrome, Safari, Edge) — transparent by default */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+  transition: background 0.25s ease;
+}
+
+/* Reveal on hover (desktop) or while the user is actively scrolling.
+   `html.is-scrolling` is set by a scroll listener and cleared after
+   ~700 ms of inactivity. */
+*:hover::-webkit-scrollbar-thumb,
+html.is-scrolling *::-webkit-scrollbar-thumb {
+  background: #6A3FF4;
+}
+*:hover::-webkit-scrollbar-thumb:hover,
+html.is-scrolling *::-webkit-scrollbar-thumb:hover {
+  background: #5a32d4;
+}
+
+/* Firefox — same intent via scrollbar-color */
+*:hover,
+html.is-scrolling * {
+  scrollbar-color: #6A3FF4 transparent;
+}
+
+/* Utility: completely hide scrollbar (still scrollable). Used on the
+   timetable's day-column wrapper so the horizontal pan bar doesn't
+   sit underneath the bottom edge of the grid. */
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   PLAN 8 PHASE 5 — Mobile-safe utilities.
+   - `h-screen-d` / `min-h-screen-d` use `100dvh` (dynamic viewport height)
+      which adapts to iOS Safari's collapsing address bar. Plain `100vh`
+      jumps when the URL bar shows/hides.
+   - `safe-bottom` / `safe-top` wrap the iPhone safe-area insets in
+      `max(env(...), <iPhone-equivalent floor>)`. On real iOS PWA the
+      device-supplied value (47px notch / 59px Dynamic Island / 34px home
+      indicator) wins; in regular browsers + DevTools mobile preview where
+      `env()` returns 0, the floor kicks in so the layout looks identical
+      to iOS PWA spacing instead of bumping into the screen edge.
+   - `safe-left` / `safe-right` keep the original behaviour — landscape
+      side insets are tiny (<16px) and don't need a floor.
+   ────────────────────────────────────────────────────────────────────── */
+.h-screen-d     { height: 100dvh; }
+.min-h-screen-d { min-height: 100dvh; }
+.safe-bottom    { padding-bottom: max(env(safe-area-inset-bottom, 0px), 34px); }
+.safe-top       { padding-top:    max(env(safe-area-inset-top, 0px), 47px); }
+.safe-left      { padding-left:   env(safe-area-inset-left, 0); }
+.safe-right     { padding-right:  env(safe-area-inset-right, 0); }
+
+/* ──────────────────────────────────────────────────────────────────────
+   PLAN 8 PHASE 2 — Animations gate.
+   When the user (or OS) disables decorative animations, an `html.no-anim`
+   class is set by AppContext. This rule kills all keyframe + transition
+   animations EXCEPT essentials (toasts, modals, loading spinners, button
+   click feedback) which opt out via the `.anim-essential` whitelist.
+   ────────────────────────────────────────────────────────────────────── */
+html.no-anim *:not(.anim-essential):not(.anim-essential *) {
+  animation-duration: 0.001s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001s !important;
+}
+
+/* Focused-mode hook — pages like the quiz taking view that lock the user
+   into a single task add `html.uniflow-no-mobile-nav` on mount so the
+   floating mobile nav bar can't overlap the page's primary action. The
+   page is responsible for removing the class on unmount. */
+html.uniflow-no-mobile-nav .uniflow-mobile-nav {
+  display: none !important;
+}
+
+/* Live-session pinned tile — LiveKit's <ParticipantTile> defaults its inner
+   <video> to object-fit: cover AND constrains the tile wrapper to a fixed
+   16:9 aspect-ratio (via --lk-participant-tile-ratio). On a tall focus pane
+   that combination crops a typical share to ~half its content. The
+   `uniflow-pin-contain` class on the pin wrapper rewrites BOTH: the tile
+   wrapper expands to 100×100% of the parent, and the video inside switches
+   to object-fit: contain so the whole frame is visible with letterboxing.
+   Aggressive specificity + !important is intentional — LiveKit's stylesheet
+   uses high-specificity selectors. */
+/* Scope strictly to LiveKit's own tile classes — earlier blanket `> *` rule
+   was inflating the absolute-positioned Pinned badge + X button into giant
+   purple/black oval overlays. */
+.uniflow-pin-contain .lk-participant-tile,
+.uniflow-pin-contain [class*="lk-participant-tile"],
+.uniflow-pin-contain [class*="lk-focus-layout"],
+.uniflow-pin-contain [class*="lk-grid-layout"] {
+  aspect-ratio: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  background: #000 !important;
+  position: absolute !important;
+  inset: 0 !important;
+}
+.uniflow-pin-contain video,
+.uniflow-pin-contain .lk-participant-media-video,
+.uniflow-pin-contain .lk-participant-tile video,
+.uniflow-pin-contain [class*="lk-participant-media"] video {
+  object-fit: contain !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  background: #000 !important;
+}
+
+/* Landscape phone — short viewport (height < 500px) + width above the md
+   breakpoint. Tailwind's `md:hidden` on the mobile nav bar normally hides
+   it once width crosses 768px, but a phone in landscape (e.g. 844×390)
+   IS a phone and still benefits from the floating nav. The rule below
+   re-enables the bar in that specific short-but-wide window AND the
+   desktop sidebar / centered header are hidden so the layout collapses
+   to the mobile chrome the user already knows. Doesn't affect laptops
+   or tablets — they have taller viewports. */
+@media (max-height: 500px) and (orientation: landscape) and (min-width: 768px) and (max-width: 1023px) {
+  .uniflow-mobile-nav { display: block !important; }
+  /* Hint to pages that we're in a phone-landscape layout. Consumers can
+     use `[data-uniflow-phone-landscape] .my-class { ... }` to opt in to
+     specific tweaks (e.g. reduce header height, drop heavy padding). */
+  body { padding-bottom: env(safe-area-inset-bottom, 0); }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  /* Squeeze decorative chrome on short viewports so the page content
+     gets more vertical real estate regardless of width. */
+  .h-screen-d { height: 100dvh; }
+}
+
+/* RTL (Arabic) — scrollbar lives on the LEFT edge in Arabic mode.
+   Modern browsers place the scrollbar on the inline-start edge (= left
+   in RTL) automatically when the element's `direction: rtl` — but only
+   reliably when set EXPLICITLY on the scroll container. iOS Safari /
+   WebKit historically kept the scrollbar on the right edge when
+   `direction` was only inherited, not set directly. The two rules below
+   stamp `direction: rtl` on the scrollable `<main>` and the inner
+   `TransitionWrapper` so the scrollbar reliably anchors left on mobile
+   PWA in Arabic mode. */
+html[dir="rtl"] main { direction: rtl; }
+html[dir="rtl"] main > div { direction: rtl; }
+
+/* Image Preview Modal Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+.animate-scaleIn {
+  animation: scaleIn 0.2s ease-out forwards;
+}
+
+/* Light-mode background blob drift.
+   Four slow, independent loops — no two blobs are ever in the same spot,
+   no two cycles align. The page feels alive without ever calling
+   attention to itself. transform-only animation; GPU-cheap. */
+@keyframes blob-drift-1 {
+  0%, 100% { transform: translate3d(0, 0, 0)        scale(1); }
+  33%      { transform: translate3d(6vw, 4vh, 0)    scale(1.05); }
+  66%      { transform: translate3d(-3vw, 7vh, 0)   scale(0.95); }
+}
+@keyframes blob-drift-2 {
+  0%, 100% { transform: translate3d(0, 0, 0)        scale(1); }
+  50%      { transform: translate3d(-5vw, 5vh, 0)   scale(1.08); }
+}
+@keyframes blob-drift-3 {
+  0%, 100% { transform: translate3d(0, 0, 0)        scale(1); }
+  40%      { transform: translate3d(4vw, -6vh, 0)   scale(0.92); }
+  80%      { transform: translate3d(-2vw, -3vh, 0)  scale(1.06); }
+}
+@keyframes blob-drift-4 {
+  0%, 100% { transform: translate3d(0, 0, 0)        scale(1); }
+  50%      { transform: translate3d(-4vw, -5vh, 0)  scale(1.04); }
+}
+/* Pace tuned to roughly match the dark-mode Aurora's noise cycle (~10-14s
+   per visible drift). Four staggered loops so the page feels alive without
+   ever syncing into a pulse. */
+.animate-blob-drift-1 { animation: blob-drift-1 11s ease-in-out infinite; }
+.animate-blob-drift-2 { animation: blob-drift-2 14s ease-in-out infinite; }
+.animate-blob-drift-3 { animation: blob-drift-3 12s ease-in-out infinite; }
+.animate-blob-drift-4 { animation: blob-drift-4 13s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-blob-drift-1,
+  .animate-blob-drift-2,
+  .animate-blob-drift-3,
+  .animate-blob-drift-4 { animation: none; }
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Electron — frameless title bar offset.
+
+   The TitleBar component (32px tall, z-[400]) is fixed-positioned at
+   top:0. The rest of the app uses `position: fixed; top: 0` (Aurora /
+   LightModeBackground / scrollable <main>) or hard-coded top values
+   (header, sidebar). None of those are affected by body padding-top,
+   so we shift them via a per-element CSS calc — adds 32px (--titlebar-h)
+   to every top anchor that currently reaches the window top.
+
+   `html.is-electron` is set by App.tsx Root via useEffect when
+   isElectronApp() returns true. The class is removed on unmount so the
+   styles strictly opt-in.
+
+   The rules use `!important` because the source classes are Tailwind
+   arbitrary-value utilities (`top-0`, `top-[calc(...)]`, etc.) which
+   compile to inline `!important`-equivalent specificity at their
+   declared selector. Without our !important the shift wouldn't win.
+   ────────────────────────────────────────────────────────────────────── */
+
+html.is-electron {
+  --titlebar-h: 32px;
+}
+
+/* Minimal-impact offset strategy. The title bar is OPAQUE
+   (`bg-[#0a0710]`, z-[400]) and covers viewport y=0-32 cleanly. Most
+   layout doesn't need adjustment — title bar simply paints over the
+   top 32px of whatever's behind it. The exceptions are:
+   1. Interactive elements that MUST remain reachable (Toast, banners,
+      ThemeToggleFab) — push below title bar.
+   2. Authenticated-layout elements (sidebar, floating header) that
+      were designed for the iPhone-notch 47px safe-area-inset floor
+      and look flush against the title bar in Electron. Adding 12px
+      of breathing room so the chrome doesn't blend together. */
+
+/* Toast container — top-4 right-4 = y=16, gets covered by title bar
+   (close button unreachable). Push below. */
+html.is-electron .fixed.top-4.right-4 {
+  top: calc(1rem + var(--titlebar-h)) !important;
+}
+
+/* ImpersonationBanner + NetworkBanner — fixed top-0 with z-[100]. The
+   whole banner would otherwise sit behind the title bar. */
+html.is-electron .fixed.top-0.z-\[100\] {
+  top: var(--titlebar-h) !important;
+}
+
+/* AuthPage's ThemeToggleFab — desktop position is top:4px right:16px,
+   covered by title bar. Push below via margin-top. */
+html.is-electron .fixed.right-4.z-50 {
+  margin-top: var(--titlebar-h);
+}
+
+/* Authenticated layout — breathing room between title bar and the
+   floating chrome. Without these, the sidebar (top-8 = y=32) sits
+   flush against the title bar's bottom edge and the header pill
+   (top calc(0.75rem + 47px) = y=59) reads as too close on Electron
+   where the safe-area floor never fires.
+   --titlebar-gap is the gap between title bar and the top of the
+   first interactive element. 16px = the standard "card" rhythm used
+   elsewhere in the design. */
+html.is-electron { --titlebar-gap: 16px; }
+
+/* Desktop sidebar — top-8 (= 32px). Push down so there's visible Aurora
+   between the title bar and the sidebar's glass card. */
+html.is-electron .fixed.top-8 {
+  top: calc(2rem + var(--titlebar-gap)) !important;
+}
+
+/* Floating header pill — calc(0.75rem + 47px) = ~59 on Electron. Add
+   the same 16px to keep the visual spacing consistent with the sidebar. */
+html.is-electron header.fixed {
+  margin-top: var(--titlebar-gap);
+}

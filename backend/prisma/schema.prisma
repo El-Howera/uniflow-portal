@@ -1,0 +1,3161 @@
+// ============================================================================
+// UniFlow College Portal — Prisma Schema
+// Backed by PostgreSQL. Migrations live in backend/prisma/migrations/.
+// Run: npx prisma migrate dev --name <change_name>
+// ============================================================================
+//
+// MULTI-TENANCY (added 2026-05-18) — Every row in every table (except `Tenant`
+// itself) carries a `tenantId String` column referencing `Tenant.id`. Tenant
+// scope is enforced at runtime by a Prisma Client Extension in
+// `backend/lib/prisma.js` that reads `AsyncLocalStorage` for the current
+// tenant id and auto-injects `where: { tenantId }` on every query plus
+// `data: { tenantId }` on every write. The `requireAuth` middleware wraps the
+// downstream handler in `runWithTenant(req.user.tenantId, ...)`; unauthenticated
+// routes (login, tenant lookup) resolve the tenant from the subdomain / header /
+// query / DEFAULT_TENANT_CODE env var.
+//
+// Every previously-`@unique` field (e.g. `User.email`) is now part of a
+// composite `@@unique([tenantId, field])` so the same value (same email,
+// course code, etc.) can exist in two tenants without collision.
+// ============================================================================
+
+generator client {
+  provider      = "prisma-client-js"
+  // `native` covers local dev (Windows/macOS/Linux glibc). The musl targets
+  // are REQUIRED for the Fly deploy — the runtime image is node:20-alpine
+  // which uses musl + OpenSSL 3.x. Without these targets the @prisma/client
+  // runtime can't find a usable engine binary and crashes with
+  // "could not find Prisma Query Engine binary for Linux Alpine".
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  // App traffic. With PgBouncer in `transaction` pool mode this URL must end
+  // with `?pgbouncer=true&connection_limit=1` (see docker/pgbouncer/README.md
+  // and .env.example).
+  url       = env("DATABASE_URL")
+  // Direct connection for migrations + introspection (bypasses PgBouncer so
+  // Prisma's advisory-lock-based migration runner works correctly). Falls
+  // back to DATABASE_URL when unset, so single-DB setups keep working.
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserRole {
+  student
+  professor
+  ta
+  sa
+  admin
+  // Plan 5 — admin sub-scopes (Plan 22: `superuser` removed). The Admin role
+  // implicitly includes both. Each sub-scope is a focused-remit dashboard.
+  financial
+  it
+}
+
+enum UserStanding {
+  Freshman
+  Sophomore
+  Junior
+  Senior
+  Graduate
+  Alumni
+}
+
+enum UserStatus {
+  Active
+  Inactive
+  Suspended
+  PendingActivation @map("Pending Activation")
+  Graduated
+}
+
+enum AttendanceStatus {
+  present
+  late
+  absent
+  excused
+}
+
+enum VerificationMethod {
+  qr_code
+  manual
+  admin_override
+  biometric
+}
+
+enum InvoiceStatus {
+  paid
+  partial
+  pending
+  overdue
+}
+
+enum InvoiceCategory {
+  tuition
+  fees
+  deposit
+  service
+  other
+}
+
+enum TransactionType {
+  payment
+  refund
+  financial_aid
+}
+
+enum TransactionStatus {
+  completed
+  pending
+  failed
+  applied
+}
+
+enum PaymentMethodType {
+  credit_card
+  bank_transfer
+  paypal
+  apple_pay
+  cash
+}
+
+enum RequestStatus {
+  pending
+  in_progress @map("in-progress")
+  completed
+  rejected
+}
+
+enum RequestPriority {
+  low
+  medium
+  high
+}
+
+enum AnnouncementCategory {
+  events
+  academic
+  financial
+  health
+  general
+  student_affairs @map("student-affairs")
+}
+
+enum AnnouncementPriority {
+  low
+  medium
+  high
+  normal
+}
+
+enum SectionType {
+  Lecture
+  Lab
+  Tutorial
+  Seminar
+}
+
+enum DayOfWeek {
+  Saturday
+  Sunday
+  Monday
+  Tuesday
+  Wednesday
+  Thursday
+  Friday
+}
+
+enum AssignmentStatus {
+  active
+  pending
+  submitted
+  graded
+  closed
+}
+
+enum QuizQuestionType {
+  mcq
+  written
+}
+
+enum QuizSubmissionStatus {
+  in_progress
+  graded
+  pending_review
+}
+
+enum SubmissionStatus {
+  submitted
+  graded
+  pending
+  pending_review
+}
+
+enum MaterialType {
+  pdf
+  slides
+  video
+  link
+  document
+}
+
+enum SessionStatus {
+  scheduled
+  live
+  active
+  ended
+  cancelled
+}
+
+enum SessionType {
+  lecture
+  office_hours @map("office-hours")
+  review
+}
+
+enum HoldType {
+  registration
+  financial
+  academic
+  disciplinary
+}
+
+enum NotificationType {
+  announcement
+  message
+  critical
+  info
+  success
+  warning
+  // System events fanned from sensitive AuditLog writes (admin recipient).
+  // See backend/lib/audit.js — only audit actions in SENSITIVE_ACTIONS trigger.
+  system
+}
+
+enum RegistrationPeriodStatus {
+  open
+  closed
+  upcoming
+  add_drop @map("add-drop")
+  late
+}
+
+enum MessageStatus {
+  sent
+  delivered
+  read
+}
+
+enum ChatMessageType {
+  text
+  user
+  system
+}
+
+enum DisciplinaryType {
+  warning
+  probation
+  suspension
+  expulsion
+}
+
+enum DisciplinaryStatus {
+  active
+  pending
+  resolved
+  dismissed
+}
+
+enum OfficeHourMode {
+  in_person
+  online
+  hybrid
+}
+
+enum ComplaintSeverity {
+  low
+  medium
+  high
+  urgent
+}
+
+enum AnalyticsMetric {
+  daily_attendance
+  daily_revenue
+  daily_logins
+  daily_registrations
+  daily_grades
+}
+
+enum RegistrationStatus {
+  pending
+  approved
+  rejected
+  dropped
+}
+
+enum NotificationPriority {
+  low
+  normal
+  high
+  urgent
+}
+
+enum ChatMemberRole {
+  student
+  professor
+  ta
+  // Group admin — promoted by the section's instructor. Has the same
+  // moderation powers as the instructor (delete, pin, system message,
+  // read-only toggle, group photo / description, member promote/demote).
+  // The instructor is implicitly an admin via their `professor` role.
+  admin
+}
+
+// ============================================================================
+// 0. TENANTS (Multi-tenancy root)
+// ============================================================================
+
+/// Each Tenant is an isolated institution (e.g. FCDS Alexandria, or another
+/// faculty using the same UniFlow installation). The `code` is the short
+/// slug used for subdomain resolution (`<code>.uniflow.app`) and the
+/// `X-Tenant-Code` header. Every other table row carries `tenantId`
+/// referencing `Tenant.id`; the Prisma extension in
+/// `backend/lib/prisma.js` enforces the filter on every query/mutation.
+model Tenant {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  shortName String?  @map("short_name")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users                   User[]
+  userAddresses           UserAddress[]
+  emergencyContacts       EmergencyContact[]
+  userSettings            UserSettings[]
+  sessions                Session[]
+  verificationCodes       VerificationCode[]
+  resetTokens             ResetToken[]
+  refreshTokens           RefreshToken[]
+  academicProfiles        AcademicProfile[]
+  semesters               Semester[]
+  transcriptCourses       TranscriptCourse[]
+  gradeBreakdowns         GradeBreakdown[]
+  semesterGpas            SemesterGpa[]
+  departments             Department[]
+  courses                 Course[]
+  courseDepartments       CourseDepartment[]
+  courseSections          CourseSection[]
+  sectionSlots            SectionSlot[]
+  registrations           Registration[]
+  registrationPeriods     RegistrationPeriod[]
+  registrationSwaps       RegistrationSwap[]
+  courseMaterials         CourseMaterial[]
+  studentProgresses       StudentProgress[]
+  courseRemarks           CourseRemark[]
+  lectures                Lecture[]
+  lectureProgresses       LectureProgress[]
+  assignments             Assignment[]
+  assignmentSubmissions   AssignmentSubmission[]
+  quizzes                 Quiz[]
+  quizQuestions           QuizQuestion[]
+  quizSubmissions         QuizSubmission[]
+  quizAnswers             QuizAnswer[]
+  gradebookEntries        GradebookEntry[]
+  bssidLocations          BssidLocation[]
+  courseSchedules         CourseSchedule[]
+  attendanceSessions      AttendanceSession[]
+  attendanceRecords       AttendanceRecord[]
+  cheatingFlags           CheatingFlag[]
+  studentEnrollments      StudentEnrollment[]
+  attendanceExcuses       AttendanceExcuse[]
+  studentAccounts         StudentAccount[]
+  invoices                Invoice[]
+  transactions            Transaction[]
+  paymentMethods          PaymentMethod[]
+  serviceFees             ServiceFee[]
+  serviceRequests         ServiceRequest[]
+  employeeProfiles        EmployeeProfile[]
+  payrollRuns             PayrollRun[]
+  payslips                Payslip[]
+  deductions              Deduction[]
+  departmentContacts      DepartmentContact[]
+  forms                   Form[]
+  formQuestions           FormQuestion[]
+  formResponses           FormResponse[]
+  formResponseAnswers     FormResponseAnswer[]
+  financialAidRequests    FinancialAidRequest[]
+  requestTypes            RequestType[]
+  complaintCategories     ComplaintCategory[]
+  supportRequests         SupportRequest[]
+  announcements           Announcement[]
+  complaints              Complaint[]
+  chatMessages            ChatMessage[]
+  chatAttachments         ChatAttachment[]
+  mutedChats              MutedChat[]
+  notifications           Notification[]
+  pushSubscriptions       PushSubscription[]
+  liveSessions            LiveSession[]
+  sessionAttendees        SessionAttendee[]
+  systemSettings          SystemSettings[]
+  auditLogs               AuditLog[]
+  chatbotConversations    ChatbotConversation[]
+  chatbotMessages         ChatbotMessage[]
+  coursePrerequisites     CoursePrerequisite[]
+  currentTerms            CurrentTerm[]
+  courseSectionTAs        CourseSectionTA[]
+  chatGroups              ChatGroup[]
+  chatMembers             ChatMember[]
+  groupChatMessages       GroupChatMessage[]
+  systemBackups           SystemBackup[]
+  enrollmentSuspensions   EnrollmentSuspension[]
+  enrollmentCancellations EnrollmentCancellation[]
+  programmeChanges        ProgrammeChange[]
+  nameChangeRequests      NameChangeRequest[]
+  roles                   Role[]
+  userRoleAssignments     UserRoleAssignment[]
+  userPermissionOverrides UserPermissionOverride[]
+  loginLocks              LoginLock[]
+
+  @@map("tenants")
+}
+
+// ============================================================================
+// 1. USERS & AUTH
+// ============================================================================
+
+model User {
+  id                        String     @id @default(cuid())
+  tenantId                  String     @map("tenant_id")
+  tenant                    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  odId                      String?    @map("od_id")
+  email                     String
+  firstName                 String     @map("first_name")
+  lastName                  String     @map("last_name")
+  password                  String
+  role                      UserRole   @default(student)
+  status                    UserStatus @default(Active)
+  phone                     String?
+  dateOfBirth               DateTime?  @map("date_of_birth")
+  gender                    String?
+  nationality               String?
+  profilePicture            String?    @map("profile_picture")
+  activated                 Boolean    @default(false)
+  emailVerified             Boolean    @default(false) @map("email_verified")
+  lastLogin                 DateTime?  @map("last_login")
+  // Firebase Cloud Messaging device token. Set on login when the browser /
+  // Capacitor client successfully obtains a token from FCM; cleared on logout
+  // or when the token is reported invalid by the FCM API. Optional —
+  // notifications still work over Socket.io + DB without a token.
+  fcmToken                  String?    @map("fcm_token")
+  fcmTokenAt                DateTime?  @map("fcm_token_at")
+  // Generic device-binding fields, decoupled from FCM. Set when the user
+  // clicks "Register Device" in their profile so attendance scans can be
+  // tied back to a specific browser/app install. Independent of notification
+  // permission — works even if push is blocked.
+  registeredDeviceId        String?    @map("registered_device_id")
+  registeredDeviceLabel     String?    @map("registered_device_label")
+  deviceRegisteredAt        DateTime?  @map("device_registered_at")
+  // Re-registration release control (Attendance Documentation §3.5.3.5).
+  // deviceReleaseAt: when the student may register a NEW device after an admin
+  // grants a release. future = 48h normal-release cooldown (manual attendance).
+  deviceReleaseAt           DateTime?  @map("device_release_at")
+  deviceReleaseType         String?    @map("device_release_type")
+  deviceReleasedById        String?    @map("device_released_by_id")
+  // Cryptographic device-binding public key (ECDSA P-256). Native app stores
+  // the Secure Enclave / StrongBox key; PWA stores a mock (unverifiable).
+  registeredDevicePublicKey String?    @map("registered_device_public_key")
+  // Phase 10 — admin-only contact + notes. Both surface in UserEditPage but
+  // are not visible to the user themselves.
+  secondaryEmail            String?    @map("secondary_email")
+  adminNotes                String?    @map("admin_notes")
+  // Plan 4 Phase 8 — academic advisor (FCDS Article 12). The flag marks a
+  // professor as available for advising (UI hint, optional). The FK on a
+  // student row points at the assigned advisor's User.id; the referenced
+  // user must have role=professor (validated at write time, not in schema).
+  isAcademicAdvisor         Boolean    @default(false) @map("is_academic_advisor")
+  // Per-student "registrations need advisor approval" flag. Defaults to
+  // false — most students register straight to SA. Admin flips this on
+  // for the subset that needs an extra advisor gate. Effective gate is
+  // (advisorPolicy.requireAdvisorApproval AND user.requiresAdvisorApproval).
+  requiresAdvisorApproval   Boolean    @default(false) @map("requires_advisor_approval")
+  academicAdvisorId         String?    @map("academic_advisor_id")
+  academicAdvisor           User?      @relation("AcademicAdvisor", fields: [academicAdvisorId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  advisees                  User[]     @relation("AcademicAdvisor")
+  // Soft-delete: set on admin DELETE, filtered out of list/login lookups.
+  // Row stays in DB so FK history (audit logs, transcripts, payslips) survives.
+  deletedAt                 DateTime?  @map("deleted_at")
+  // Plan 5 — reversible administrative pause. Distinct from `deletedAt`
+  // (permanent removal). Login handler surfaces a per-reason message:
+  // "Your account is inactive: <reason>. Contact administration..."
+  suspendedAt               DateTime?  @map("suspended_at")
+  suspendedReason           String?    @map("suspended_reason")
+  // Stripe Customer ID — created lazily on first Stripe Checkout Session
+  // for this user. Lets future flows attach a saved card / look up history
+  // without re-creating the customer record. Nullable so legacy rows + users
+  // who never pay don't have to be backfilled.
+  stripeCustomerId          String?    @map("stripe_customer_id")
+  createdAt                 DateTime   @default(now()) @map("created_at")
+  updatedAt                 DateTime   @updatedAt @map("updated_at")
+
+  // §1 Auth relations
+  address           UserAddress?
+  emergencyContact  EmergencyContact?
+  settings          UserSettings?
+  sessions          Session[]
+  verificationCodes VerificationCode[]
+  resetTokens       ResetToken[]
+  refreshTokens     RefreshToken[]
+  // Phase 6 — dynamic role assignments. User.role (above) is the denormalized
+  // primary role used for fast filtering and JWT claims; this list is the
+  // source-of-truth for permission enforcement (a user can hold multiple roles).
+  roleAssignments   UserRoleAssignment[]
+
+  // §2 Academic
+  academicProfile   AcademicProfile?
+  transcriptCourses TranscriptCourse[]
+  semesterGpas      SemesterGpa[]
+
+  // §3 Courses (instructor)
+  instructedSections            CourseSection[]   @relation("SectionInstructor")
+  courseSchedules               CourseSchedule[]
+  taAssignments                 CourseSectionTA[] @relation("TAAssignments")
+  taAssignmentsGranted          CourseSectionTA[] @relation("TAAssigner")
+  defaultForCoursesAsInstructor Course[]          @relation("CourseDefaultInstructor")
+  defaultForCoursesAsTa         Course[]          @relation("CourseDefaultTa")
+
+  // §4 Registrations
+  registrations             Registration[]
+  registrationApprovals     Registration[]     @relation("RegistrationApprover")
+  registrationSwaps         RegistrationSwap[] @relation("SwapUser")
+  registrationSwapProcessed RegistrationSwap[] @relation("SwapProcessor")
+
+  // §5 Course Content
+  studentProgress   StudentProgress[]
+  uploadedMaterials CourseMaterial[]  @relation("MaterialUploader")
+  lectureProgress   LectureProgress[]
+
+  // §6 Assignments
+  assignmentSubmissions AssignmentSubmission[]
+  gradedSubmissions     AssignmentSubmission[] @relation("SubmissionGrader")
+  proposedSubmissions   AssignmentSubmission[] @relation("SubmissionProposer")
+  approvedSubmissions   AssignmentSubmission[] @relation("SubmissionApprover")
+
+  // §7 Quizzes
+  quizSubmissions QuizSubmission[]
+  createdQuizzes  Quiz[]           @relation("QuizCreator")
+
+  // §8 Gradebook
+  gradebookEntries      GradebookEntry[]      @relation("GradebookStudent")
+  gradedEntries         GradebookEntry[]      @relation("GradebookGrader")
+  // Plan 7 Phase 1 — professor confirmation of final grades.
+  confirmedGradeEntries GradebookEntry[]      @relation("GradebookConfirmer")
+  releasedGradeEntries  GradebookEntry[]      @relation("GradebookReleaser")
+  // Plan 7 Phase 4 — generic form composer.
+  formsCreated          Form[]                @relation("FormCreator")
+  formResponses         FormResponse[]        @relation("FormRespondent")
+  // Plan 7 Phase 6 — financial aid.
+  financialAidRequests  FinancialAidRequest[] @relation("FinancialAidApplicant")
+  financialAidReviews   FinancialAidRequest[] @relation("FinancialAidReviewer")
+
+  // §9 Attendance
+  attendanceSessions AttendanceSession[]
+  attendanceRecords  AttendanceRecord[]
+  cheatingFlagsUser  CheatingFlag[]      @relation("CheatingFlagUser")
+  cheatingFlagsOther CheatingFlag[]      @relation("CheatingFlagOther")
+  studentEnrollments StudentEnrollment[]
+  attendanceExcuses  AttendanceExcuse[]  @relation("ExcuseUser")
+  excuseReviews      AttendanceExcuse[]  @relation("ExcuseReviewer")
+
+  // §10 Payments
+  studentAccount           StudentAccount?
+  invoices                 Invoice[]
+  transactions             Transaction[]
+  paymentMethods           PaymentMethod[]
+  serviceRequests          ServiceRequest[]
+  serviceRequestsProcessed ServiceRequest[] @relation("ServiceRequestProcessor")
+
+  // §11 Student Affairs
+  supportRequests          SupportRequest[]
+  assignedSupportRequests  SupportRequest[] @relation("SupportRequestAssignee")
+  processedSupportRequests SupportRequest[] @relation("SupportRequestProcessor")
+  announcements            Announcement[]   @relation("AnnouncementAuthor")
+  complaints               Complaint[]      @relation("Complainant")
+  complaintTargets         Complaint[]      @relation("ComplaintTarget")
+  complaintResolutions     Complaint[]      @relation("ComplaintResolver")
+  processedComplaints      Complaint[]      @relation("ComplaintProcessor")
+
+  // §12 Chat & Notifications
+  chatMessages         ChatMessage[]
+  mutedChats           MutedChat[]
+  notifications        Notification[]
+  pushSubscriptions    PushSubscription[]
+  chatMemberships      ChatMember[]
+  groupMessages        GroupChatMessage[] @relation("GroupMessageSender")
+  deletedGroupMessages GroupChatMessage[] @relation("GroupMessageDeleter")
+
+  // §13 Live Sessions
+  hostedSessions   LiveSession[]     @relation("SessionHost")
+  sessionAttendees SessionAttendee[]
+
+  // §14 Admin
+  auditLogs     AuditLog[]     @relation("AuditPerformer")
+  systemBackups SystemBackup[] @relation("BackupCreator")
+
+  // §15 Chatbot
+  chatbotConversations ChatbotConversation[]
+
+  // New models
+  currentTermSet CurrentTerm[] @relation("CurrentTermSetter")
+
+  // §16 Name Change Requests
+  nameChangeRequests  NameChangeRequest[]
+  reviewedNameChanges NameChangeRequest[] @relation("NameChangeReviewer")
+
+  // Plan 4 Phase 6 — enrollment workflow back-references. Each model has a
+  // separate relation alias so a single user can be both requester and
+  // reviewer (for non-self approvals).
+  suspensions                  EnrollmentSuspension[]   @relation("SuspensionUser")
+  reviewedSuspensions          EnrollmentSuspension[]   @relation("SuspensionReviewer")
+  cancellations                EnrollmentCancellation[] @relation("CancellationUser")
+  reviewedCancellations        EnrollmentCancellation[] @relation("CancellationReviewer")
+  programmeChanges             ProgrammeChange[]        @relation("ProgrammeChangeUser")
+  reviewedProgrammeChanges     ProgrammeChange[]        @relation("ProgrammeChangeReviewer")
+  // Plan 4 Phase 7 — mobility / auditor back-references.
+  // Plan 4 Phase 8 — registrations the user (as advisor) has approved.
+  advisorApprovedRegistrations Registration[]           @relation("RegistrationAdvisorApprover")
+
+  // §10b Payroll
+  employeeProfile    EmployeeProfile?
+  payslips           Payslip[]        @relation("PayslipUser")
+  payrollRunsCreated PayrollRun[]     @relation("PayrollRunner")
+
+  // Plan 5 — per-user permission overrides, login locks, manual enrollments.
+  permissionOverrides        UserPermissionOverride[] @relation("PermissionOverrideUser")
+  createdPermissionOverrides UserPermissionOverride[] @relation("PermissionOverrideCreator")
+  createdLoginLocks          LoginLock[]              @relation("LoginLockCreator")
+  releasedLoginLocks         LoginLock[]              @relation("LoginLockReleaser")
+
+  @@unique([tenantId, email])
+  @@unique([tenantId, odId])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model UserAddress {
+  id       String  @id @default(cuid())
+  tenantId String  @map("tenant_id")
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId   String  @unique @map("user_id")
+  street   String?
+  city     String?
+  state    String?
+  zipCode  String? @map("zip_code")
+  country  String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("user_addresses")
+}
+
+model EmergencyContact {
+  id           String  @id @default(cuid())
+  tenantId     String  @map("tenant_id")
+  tenant       Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId       String  @unique @map("user_id")
+  name         String
+  relationship String?
+  phone        String
+  email        String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("emergency_contacts")
+}
+
+model UserSettings {
+  id                 String  @id @default(cuid())
+  tenantId           String  @map("tenant_id")
+  tenant             Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId             String  @unique @map("user_id")
+  theme              String  @default("system")
+  fontSize           Int     @default(16) @map("font_size")
+  compactMode        Boolean @default(false) @map("compact_mode")
+  notifEmail         Boolean @default(true) @map("notif_email")
+  notifPush          Boolean @default(true) @map("notif_push")
+  notifSms           Boolean @default(false) @map("notif_sms")
+  notifAnnouncements Boolean @default(true) @map("notif_announcements")
+  notifGrades        Boolean @default(true) @map("notif_grades")
+  notifAssignments   Boolean @default(true) @map("notif_assignments")
+  notifMessages      Boolean @default(true) @map("notif_messages")
+  notifReminders     Boolean @default(true) @map("notif_reminders")
+  showEmail          Boolean @default(false) @map("show_email")
+  showPhone          Boolean @default(false) @map("show_phone")
+  showProfile        Boolean @default(true) @map("show_profile")
+  allowMessages      Boolean @default(true) @map("allow_messages")
+  language           String  @default("en")
+  timezone           String  @default("Africa/Cairo")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("user_settings")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  token     String
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, token])
+  @@index([tenantId])
+  @@map("sessions")
+}
+
+model VerificationCode {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  email     String
+  code      String
+  purpose   String   @default("email_verification")
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("verification_codes")
+}
+
+model ResetToken {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  token     String
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, token])
+  @@index([tenantId])
+  @@map("reset_tokens")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  token     String
+  revoked   Boolean  @default(false)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, token])
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([tenantId])
+  @@map("refresh_tokens")
+}
+
+// ============================================================================
+// 2. ACADEMIC RECORDS
+// ============================================================================
+
+model AcademicProfile {
+  id                  String        @id @default(cuid())
+  tenantId            String        @map("tenant_id")
+  tenant              Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId              String        @unique @map("user_id")
+  program             String?
+  major               String?
+  minor               String?
+  studentId           String?       @map("student_id")
+  department          String?
+  level               Int?
+  creditHours         Int           @default(0) @map("credit_hours")
+  completedCredits    Int           @default(0) @map("completed_credits")
+  enrollmentDate      DateTime?     @map("enrollment_date")
+  expectedGraduation  DateTime?     @map("expected_graduation")
+  standing            UserStanding? @default(Freshman)
+  status              UserStatus?   @default(Active)
+  advisorName         String?       @map("advisor_name")
+  advisorEmail        String?       @map("advisor_email")
+  gpa                 Decimal       @default(0.00) @db.Decimal(3, 2)
+  totalCredits        Int           @default(0) @map("total_credits")
+  creditsThisSemester Int           @default(0) @map("credits_this_semester")
+  // Plan 4 Phase 5 — recomputed by transcript-cascade after every grade event.
+  //   academicStanding: 'good' | 'warning' | 'probation' | 'dismissed' (FCDS Article 19)
+  //   honorsEligible:   'none' | 'honors' | 'high_honors' | 'disqualified'  (Article 22)
+  academicStanding    String?       @map("academic_standing")
+  honorsEligible      String?       @map("honors_eligible")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, studentId])
+  @@index([tenantId])
+  @@map("academic_profiles")
+}
+
+model Semester {
+  id           String    @id @default(cuid())
+  tenantId     String    @map("tenant_id")
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code         String?
+  name         String
+  startDate    DateTime? @map("start_date")
+  endDate      DateTime? @map("end_date")
+  academicYear String?   @map("academic_year")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  transcriptCourses   TranscriptCourse[]
+  semesterGpas        SemesterGpa[]
+  registrationPeriods RegistrationPeriod[]
+  invoices            Invoice[]
+  currentTerm         CurrentTerm?
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("semesters")
+}
+
+model TranscriptCourse {
+  id            String   @id @default(cuid())
+  tenantId      String   @map("tenant_id")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId        String   @map("user_id")
+  semesterId    String   @map("semester_id")
+  courseCode    String   @map("course_code")
+  courseTitle   String   @map("course_title")
+  credits       Int
+  grade         String
+  qualityPoints Decimal  @default(0.0) @map("quality_points") @db.Decimal(3, 1)
+  // Plan 22 retake support — successive attempts for the same
+  // (user, semester, courseCode) triple bump this so each release
+  // creates a NEW row instead of editing the previous one. Default 1
+  // covers every legacy row; release endpoint allocates max+1.
+  attemptNumber Int      @default(1) @map("attempt_number")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  semester   Semester         @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+  breakdowns GradeBreakdown[]
+
+  @@unique([userId, semesterId, courseCode, attemptNumber])
+  @@index([userId, semesterId])
+  @@index([tenantId])
+  @@map("transcript_courses")
+}
+
+model GradeBreakdown {
+  id                 String @id @default(cuid())
+  tenantId           String @map("tenant_id")
+  tenant             Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  transcriptCourseId String @map("transcript_course_id")
+  categoryTitle      String @map("category_title")
+  componentName      String @map("component_name")
+  grade              String
+  weight             String
+  contribution       String
+
+  transcriptCourse TranscriptCourse @relation(fields: [transcriptCourseId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("grade_breakdowns")
+}
+
+model SemesterGpa {
+  id            String   @id @default(cuid())
+  tenantId      String   @map("tenant_id")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId        String   @map("user_id")
+  semesterId    String   @map("semester_id")
+  gpa           Decimal  @db.Decimal(3, 2)
+  credits       Int
+  cumulativeGpa Decimal  @default(0.00) @map("cumulative_gpa") @db.Decimal(3, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  semester Semester @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, semesterId])
+  @@index([tenantId])
+  @@map("semester_gpas")
+}
+
+// ============================================================================
+// 3. DEPARTMENTS & COURSES
+// ============================================================================
+
+model Department {
+  id                String   @id @default(cuid())
+  tenantId          String   @map("tenant_id")
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code              String
+  name              String
+  description       String?
+  headId            String?  @map("head_id")
+  // Plan 4 Phase 2 follow-up — program-level fields folded into Department
+  // (programs and departments unified). Defaults match FCDS: 140 cr total
+  // = 106 compulsory + 24 elective + 10 university requirements (the
+  // remaining 10 live on the student's record, not the department).
+  totalCredits      Int      @default(140) @map("total_credits")
+  compulsoryCredits Int      @default(106) @map("compulsory_credits")
+  electiveCredits   Int      @default(24) @map("elective_credits")
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  courses            Course[]
+  // Cross-listed courses (M:N via CourseDepartment). Lets a department
+  // surface courses owned by another department in its student catalog.
+  crossListedCourses CourseDepartment[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("departments")
+}
+
+// Plan 4 Phase 2 — academic programs (FCDS Article 1) were merged into the
+// `departments` table per a follow-up cleanup. The 6 FCDS programs now live
+// as 6 department rows with codes 01–06 alongside the legacy department
+// rows; migration 20260501110000 dropped the separate `programs` table.
+
+model Course {
+  id                  String   @id @default(cuid())
+  tenantId            String   @map("tenant_id")
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code                String
+  title               String
+  credits             Int
+  departmentId        String?  @map("department_id")
+  description         String?
+  level               Int?
+  syllabus            Json?
+  maxStudents         Int      @default(30) @map("max_students")
+  lectureOnly         Boolean  @default(false) @map("lecture_only")
+  isActive            Boolean  @default(true) @map("is_active")
+  semester            String?
+  // Plan 4 Phase 2 — language (Article 7) + category (Articles 30, 31).
+  // language: 'en' | 'ar' — drives the language chip on student catalog cards.
+  // category: 'university' | 'faculty_compulsory' | 'faculty_elective' |
+  //           'program_compulsory' | 'program_elective' | 'training' | null.
+  // (Programs were merged into departments; use `departmentId` for the
+  //  per-course program/department affiliation.)
+  language            String   @default("en")
+  category            String?
+  // Default instructor + TA for the course. Sections inherit them on
+  // creation unless the admin picks someone else per section. ON DELETE
+  // SET NULL so deleting the user clears the default but leaves the
+  // course intact.
+  defaultInstructorId String?  @map("default_instructor_id")
+  defaultTaId         String?  @map("default_ta_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  department             Department?            @relation(fields: [departmentId], references: [id])
+  defaultInstructor      User?                  @relation("CourseDefaultInstructor", fields: [defaultInstructorId], references: [id], onDelete: SetNull)
+  defaultTa              User?                  @relation("CourseDefaultTa", fields: [defaultTaId], references: [id], onDelete: SetNull)
+  sections               CourseSection[]
+  registrations          Registration[]
+  materials              CourseMaterial[]
+  studentProgress        StudentProgress[]
+  remarks                CourseRemark[]
+  assignments            Assignment[]
+  quizzes                Quiz[]
+  gradebookEntries       GradebookEntry[]
+  assignmentSubmissions  AssignmentSubmission[]
+  quizSubmissions        QuizSubmission[]
+  attendanceSessions     AttendanceSession[]
+  attendanceRecords      AttendanceRecord[]
+  courseSchedules        CourseSchedule[]
+  studentEnrollments     StudentEnrollment[]
+  liveSessions           LiveSession[]
+  chatMessages           ChatMessage[]
+  mutedChats             MutedChat[]
+  lectures               Lecture[]
+  prereqFor              CoursePrerequisite[]   @relation("CoursePrereqs")
+  prerequisites          CoursePrerequisite[]   @relation("PrereqOf")
+  // Multi-department cross-listing — see migration 20260520000000. The
+  // single `departmentId` above remains the PRIMARY / owning department;
+  // these rows are PURELY ADDITIVE extensions that broaden visibility.
+  // Student access = (course.departmentId == student.dept)
+  //                  OR (student.dept IN crossListedDepartments).
+  crossListedDepartments CourseDepartment[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("courses")
+}
+
+// Many-to-many cross-listing between Course and Department. A course may
+// belong to one PRIMARY department (Course.departmentId) AND be cross-listed
+// to N additional departments via rows here — the cross-listed departments
+// can see the course in their student catalog without needing a duplicate
+// Course row per department.
+model CourseDepartment {
+  tenantId     String   @map("tenant_id")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId     String   @map("course_id")
+  departmentId String   @map("department_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  course     Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@id([courseId, departmentId])
+  @@index([courseId])
+  @@index([departmentId])
+  @@index([tenantId])
+  @@map("course_departments")
+}
+
+model CourseSection {
+  id             String      @id @default(cuid())
+  tenantId       String      @map("tenant_id")
+  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId       String      @map("course_id")
+  sectionId      String      @map("section_id")
+  type           SectionType
+  instructorId   String?     @map("instructor_id")
+  instructorName String?     @map("instructor_name")
+  location       String?
+  room           String?
+  // FK → BssidLocation. Nullable so existing rows survive the migration;
+  // the API enforces "required on create" for new sections via
+  // assertSectionHallValid in the registration server.
+  hallId         String?     @map("hall_id")
+  semester       String?
+  year           Int?
+  capacity       Int         @default(30)
+  enrolled       Int         @default(0)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  course             Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  hall               BssidLocation?      @relation("SectionHall", fields: [hallId], references: [id], onDelete: SetNull)
+  instructor         User?               @relation("SectionInstructor", fields: [instructorId], references: [id])
+  slots              SectionSlot[]
+  registrations      Registration[]
+  gradebookEntries   GradebookEntry[]    @relation("GradebookSectionRef")
+  attendanceSessions AttendanceSession[]
+  courseSchedules    CourseSchedule[]
+  swapsTo            RegistrationSwap[]  @relation("SwapToSection")
+  lectures           Lecture[]
+  taAssignments      CourseSectionTA[]
+  chatGroup          ChatGroup?
+  // Plan 4 Phase 7 — auditor enrollments (Article 24).
+
+  @@unique([courseId, sectionId])
+  @@index([tenantId])
+  @@map("course_sections")
+}
+
+model SectionSlot {
+  id        String    @id @default(cuid())
+  tenantId  String    @map("tenant_id")
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sectionId String    @map("section_id")
+  day       DayOfWeek
+  startTime String    @map("start_time")
+  endTime   String    @map("end_time")
+  room      String?
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  section CourseSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("section_slots")
+}
+
+// ============================================================================
+// 4. REGISTRATIONS
+// ============================================================================
+
+model Registration {
+  id                  String             @id @default(cuid())
+  tenantId            String             @map("tenant_id")
+  tenant              Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId              String             @map("user_id")
+  courseId            String             @map("course_id")
+  sectionId           String             @map("section_id")
+  status              RegistrationStatus @default(pending)
+  approvedById        String?            @map("approved_by_id")
+  pendingReason       String?            @map("pending_reason")
+  pendingNote         String?            @map("pending_note")
+  // Plan 4 Phase 7 — internal auditor flag (Article 24). When true, the
+  // course doesn't count toward credit-hour totals or GPA.
+  isAudit             Boolean            @default(false) @map("is_audit")
+  // Plan 4 Phase 8 — academic-advisor approval gate (Article 12). When the
+  // policy requires advisor approval, registrations land in `pending` with
+  // `pendingReason='advisor_approval'`; the assigned advisor flips
+  // `advisorApproved=true` from the Advisees queue.
+  advisorApproved     Boolean            @default(false) @map("advisor_approved")
+  advisorApprovedAt   DateTime?          @map("advisor_approved_at")
+  advisorApprovedById String?            @map("advisor_approved_by_id")
+  registeredAt        DateTime           @default(now()) @map("registered_at")
+  droppedAt           DateTime?          @map("dropped_at")
+  isActive            Boolean            @default(true) @map("is_active")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course            Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  section           CourseSection      @relation(fields: [sectionId], references: [id])
+  approvedBy        User?              @relation("RegistrationApprover", fields: [approvedById], references: [id])
+  advisorApprovedBy User?              @relation("RegistrationAdvisorApprover", fields: [advisorApprovedById], references: [id])
+  swaps             RegistrationSwap[]
+
+  @@unique([userId, sectionId])
+  @@index([userId, status])
+  @@index([tenantId])
+  @@map("registrations")
+}
+
+model RegistrationPeriod {
+  id              String                   @id @default(cuid())
+  tenantId        String                   @map("tenant_id")
+  tenant          Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  semesterId      String?                  @map("semester_id")
+  semester        String?
+  type            String?
+  status          RegistrationPeriodStatus @default(upcoming)
+  startDate       DateTime                 @map("start_date")
+  endDate         DateTime                 @map("end_date")
+  isActive        Boolean                  @default(false) @map("is_active")
+  addDropDeadline DateTime?                @map("add_drop_deadline")
+  lateDeadline    DateTime?                @map("late_deadline")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+
+  semesterRef Semester? @relation(fields: [semesterId], references: [id])
+
+  @@index([tenantId])
+  @@map("registration_periods")
+}
+
+model RegistrationSwap {
+  id                 String             @id @default(cuid())
+  tenantId           String             @map("tenant_id")
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId             String             @map("user_id")
+  fromRegistrationId String             @map("from_registration_id")
+  toSectionId        String             @map("to_section_id")
+  status             RegistrationStatus @default(pending)
+  processedById      String?            @map("processed_by_id")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  user             User          @relation("SwapUser", fields: [userId], references: [id])
+  fromRegistration Registration  @relation(fields: [fromRegistrationId], references: [id])
+  toSection        CourseSection @relation("SwapToSection", fields: [toSectionId], references: [id])
+  processedBy      User?         @relation("SwapProcessor", fields: [processedById], references: [id])
+
+  @@index([tenantId])
+  @@map("registration_swaps")
+}
+
+// ============================================================================
+// 5. COURSE CONTENT
+// ============================================================================
+
+model CourseMaterial {
+  id            String       @id @default(cuid())
+  tenantId      String       @map("tenant_id")
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId      String       @map("course_id")
+  sectionId     String?      @map("section_id")
+  category      String       @default("lectures")
+  title         String
+  type          MaterialType
+  size          String?
+  duration      String?
+  url           String?
+  filePath      String?      @map("file_path")
+  fileName      String?      @map("file_name")
+  originalName  String?      @map("original_name")
+  uploadedById  String?      @map("uploaded_by_id")
+  downloadCount Int          @default(0) @map("download_count")
+  isPublished   Boolean      @default(true) @map("is_published")
+  isNew         Boolean      @default(true) @map("is_new")
+  views         Int          @default(0)
+  uploadedAt    DateTime     @default(now()) @map("uploaded_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  course     Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  uploadedBy User?             @relation("MaterialUploader", fields: [uploadedById], references: [id])
+  progress   StudentProgress[]
+
+  @@index([tenantId])
+  @@map("course_materials")
+}
+
+model StudentProgress {
+  id           String    @id @default(cuid())
+  tenantId     String    @map("tenant_id")
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId       String    @map("user_id")
+  courseId     String    @map("course_id")
+  materialId   String?   @map("material_id")
+  materialType String?   @map("material_type")
+  completed    Boolean   @default(false)
+  progress     Decimal   @default(0) @db.Decimal(5, 2)
+  position     Int       @default(0)
+  duration     Int       @default(0)
+  completedAt  DateTime? @map("completed_at")
+  lastViewedAt DateTime? @map("last_viewed_at")
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course   Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  material CourseMaterial? @relation(fields: [materialId], references: [id])
+
+  @@unique([userId, materialId])
+  @@index([tenantId])
+  @@map("student_progress")
+}
+
+model CourseRemark {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId  String   @map("course_id")
+  userId    String?  @map("user_id")
+  title     String
+  content   String
+  important Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("course_remarks")
+}
+
+model Lecture {
+  id            String    @id @default(cuid())
+  tenantId      String    @map("tenant_id")
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId      String    @map("course_id")
+  sectionId     String?   @map("section_id")
+  lectureNumber Int       @map("lecture_number")
+  title         String
+  topic         String?
+  scheduledFor  DateTime? @map("scheduled_for")
+  recordingUrl  String?   @map("recording_url")
+  slidesUrl     String?   @map("slides_url")
+  notes         String?
+  isPublished   Boolean   @default(true) @map("is_published")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  course   Course            @relation(fields: [courseId], references: [id])
+  section  CourseSection?    @relation(fields: [sectionId], references: [id])
+  progress LectureProgress[]
+
+  @@index([tenantId])
+  @@map("lectures")
+}
+
+model LectureProgress {
+  id             String    @id @default(cuid())
+  tenantId       String    @map("tenant_id")
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId         String    @map("user_id")
+  lectureId      String    @map("lecture_id")
+  watchedSeconds Int       @default(0) @map("watched_seconds")
+  completed      Boolean   @default(false)
+  lastWatchedAt  DateTime? @map("last_watched_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lecture Lecture @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lectureId])
+  @@index([tenantId])
+  @@map("lecture_progress")
+}
+
+// ============================================================================
+// 6. ASSIGNMENTS & SUBMISSIONS
+// ============================================================================
+
+model Assignment {
+  id                String           @id @default(cuid())
+  tenantId          String           @map("tenant_id")
+  tenant            Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId          String           @map("course_id")
+  title             String
+  description       String?
+  dueDate           DateTime         @map("due_date")
+  maxScore          Float            @default(100) @map("max_score")
+  weight            Float?
+  status            AssignmentStatus @default(active)
+  allowLate         Boolean          @default(false) @map("allow_late")
+  // Score change applied (or shown to the student) when the deadline passes
+  // without a submission. Negative number = penalty (default -2). Set to 0 to
+  // disable. Editable per-assignment by professors / admin.
+  latePenalty       Float            @default(-2) @map("late_penalty")
+  // Grace period (hours) AFTER dueDate before an unsubmitted assignment is
+  // flagged "missing" on the student page. Default 0 = flagged the moment
+  // the deadline passes. Lets the staff hold the missing-state for a few
+  // hours so a student who submits 30 min late doesn't show as missing.
+  missingAfterHours Int              @default(0) @map("missing_after_hours")
+  instructions      String?
+  attachments       String[]         @default([])
+  allowedFileTypes  String[]         @default([]) @map("allowed_file_types")
+  maxSubmissions    Int              @default(3) @map("max_submissions")
+  // Optional audience targeting. Empty = whole class (default).
+  // Non-empty narrows the assignment to the listed user ids (FCDS Plan 5).
+  audienceUserIds   String[]         @default([]) @map("audience_user_ids")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  course      Course                 @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  submissions AssignmentSubmission[]
+
+  @@index([tenantId])
+  @@map("assignments")
+}
+
+model AssignmentSubmission {
+  id               String           @id @default(cuid())
+  tenantId         String           @map("tenant_id")
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignmentId     String           @map("assignment_id")
+  userId           String           @map("user_id")
+  courseId         String           @map("course_id")
+  filePath         String?          @map("file_path")
+  fileName         String?          @map("file_name")
+  originalFileName String?          @map("original_file_name")
+  content          String?
+  submittedAt      DateTime         @default(now()) @map("submitted_at")
+  isLate           Boolean          @default(false) @map("is_late")
+  attemptNumber    Int              @default(1) @map("attempt_number")
+  status           SubmissionStatus @default(submitted)
+  score            Float?
+  feedback         String?
+  gradedById       String?          @map("graded_by_id")
+  gradedAt         DateTime?        @map("graded_at")
+  proposedScore    Float?           @map("proposed_score")
+  proposedById     String?          @map("proposed_by_id")
+  approvedById     String?          @map("approved_by_id")
+  approvedAt       DateTime?        @map("approved_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course     Course     @relation(fields: [courseId], references: [id])
+  gradedBy   User?      @relation("SubmissionGrader", fields: [gradedById], references: [id])
+  proposedBy User?      @relation("SubmissionProposer", fields: [proposedById], references: [id])
+  approvedBy User?      @relation("SubmissionApprover", fields: [approvedById], references: [id])
+
+  @@unique([assignmentId, userId])
+  @@index([assignmentId, userId])
+  @@index([tenantId])
+  @@map("assignment_submissions")
+}
+
+// ============================================================================
+// 7. QUIZZES
+// ============================================================================
+
+model Quiz {
+  id              String    @id @default(cuid())
+  tenantId        String    @map("tenant_id")
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId        String    @map("course_id")
+  title           String
+  description     String?
+  timeLimit       Int       @default(30) @map("time_limit")
+  maxAttempts     Int       @default(1) @map("max_attempts")
+  passingScore    Float?    @map("passing_score")
+  isPublished     Boolean   @default(false) @map("is_published")
+  dueDate         DateTime? @map("due_date")
+  // `startsAt` is the global timer anchor. Once it passes, every student's
+  // remaining time = (startsAt + timeLimit) - now. NULL = unscheduled (the
+  // quiz is open as soon as it's published). FCDS uses this to enforce
+  // "everyone takes the quiz at the same wall-clock window".
+  // Stored as TIMESTAMPTZ — preserves the absolute instant regardless of
+  // database session timezone. See migration 20260503300000.
+  startsAt        DateTime? @map("starts_at") @db.Timestamptz(6)
+  // Optional total-points override. NULL = derive from Σ question.points.
+  totalPoints     Float?    @map("total_points")
+  createdById     String?   @map("created_by_id")
+  // Optional audience targeting. Empty = whole class (default).
+  // Non-empty narrows the quiz to the listed user ids (FCDS Plan 5).
+  audienceUserIds String[]  @default([]) @map("audience_user_ids")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdBy   User?            @relation("QuizCreator", fields: [createdById], references: [id])
+  questions   QuizQuestion[]
+  submissions QuizSubmission[]
+
+  @@index([tenantId])
+  @@map("quizzes")
+}
+
+model QuizQuestion {
+  id            String           @id @default(cuid())
+  tenantId      String           @map("tenant_id")
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quizId        String           @map("quiz_id")
+  type          QuizQuestionType @default(mcq)
+  text          String
+  points        Float            @default(1)
+  options       Json?
+  correctAnswer String?          @map("correct_answer")
+  sortOrder     Int              @default(0) @map("sort_order")
+  createdAt     DateTime         @default(now()) @map("created_at")
+
+  quiz    Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  answers QuizAnswer[]
+
+  @@index([tenantId])
+  @@map("quiz_questions")
+}
+
+model QuizSubmission {
+  id          String               @id @default(cuid())
+  tenantId    String               @map("tenant_id")
+  tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quizId      String               @map("quiz_id")
+  userId      String               @map("user_id")
+  courseId    String               @map("course_id")
+  startedAt   DateTime             @default(now()) @map("started_at")
+  submittedAt DateTime?            @map("submitted_at")
+  score       Float?
+  maxPoints   Float                @default(0) @map("max_points")
+  status      QuizSubmissionStatus @default(in_progress)
+  attempt     Int                  @default(1)
+  createdAt   DateTime             @default(now()) @map("created_at")
+
+  quiz    Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course  Course       @relation(fields: [courseId], references: [id])
+  answers QuizAnswer[]
+
+  @@unique([quizId, userId, attempt])
+  @@index([tenantId])
+  @@map("quiz_submissions")
+}
+
+model QuizAnswer {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  submissionId String   @map("submission_id")
+  questionId   String   @map("question_id")
+  answer       String?  @map("user_answer")
+  isCorrect    Boolean? @map("is_correct")
+  pointsEarned Float    @default(0) @map("points_earned")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  submission QuizSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  question   QuizQuestion   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("quiz_answers")
+}
+
+// ============================================================================
+// 8. GRADEBOOK
+// ============================================================================
+
+model GradebookEntry {
+  id            String    @id @default(cuid())
+  tenantId      String    @map("tenant_id")
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId      String    @map("course_id")
+  sectionId     String?   @map("section_id")
+  studentId     String    @map("student_id")
+  component     String?
+  score         Decimal?  @db.Decimal(5, 2)
+  maxScore      Decimal   @default(100) @map("max_score") @db.Decimal(5, 2)
+  letterGrade   String?   @map("letter_grade")
+  gradePoints   Float?    @map("grade_points")
+  isFinal       Boolean   @default(false) @map("is_final")
+  comments      String?
+  gradedById    String?   @map("graded_by_id")
+  // Plan 7 Phase 1 — professor confirmation gate. When isFinal=true rows are
+  // created, transcript ripple is skipped until confirmedById is non-null.
+  // Backend auto-reopens (sets confirmedById back to null) when a related
+  // breakdown is edited after confirmation, so the professor can re-review.
+  confirmedById String?   @map("confirmed_by_id")
+  confirmedAt   DateTime? @map("confirmed_at")
+  // Plan 22 follow-up — Confirm vs Release split. confirmedAt = letter is
+  // computed, visible on prof gradebook + student's Current Semester view.
+  // releasedAt = prof explicitly fired the transcript cascade, the course
+  // is now on the official transcript and disappears from Current Semester.
+  releasedById  String?   @map("released_by_id")
+  releasedAt    DateTime? @map("released_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  course      Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  section     CourseSection? @relation("GradebookSectionRef", fields: [sectionId], references: [id])
+  student     User           @relation("GradebookStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  gradedBy    User?          @relation("GradebookGrader", fields: [gradedById], references: [id])
+  confirmedBy User?          @relation("GradebookConfirmer", fields: [confirmedById], references: [id], onDelete: SetNull)
+  releasedBy  User?          @relation("GradebookReleaser", fields: [releasedById], references: [id], onDelete: SetNull)
+
+  @@unique([courseId, studentId, component])
+  @@index([confirmedById])
+  @@index([releasedById])
+  @@index([tenantId])
+  @@map("gradebook_entries")
+}
+
+// ============================================================================
+// 9. ATTENDANCE
+// ============================================================================
+
+// Halls / classrooms. Originally created to scope attendance QR validation
+// (BSSID match); now also the canonical "room" reference for
+// CourseSection.hallId so the timetable scheduler runs against real,
+// capacity-bounded rooms.
+model BssidLocation {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bssid     String
+  location  String
+  building  String?
+  floor     String?
+  room      String?
+  name      String?
+  capacity  Int      @default(30)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  sections CourseSection[] @relation("SectionHall")
+
+  @@unique([tenantId, bssid])
+  @@index([tenantId])
+  @@map("bssid_locations")
+}
+
+model CourseSchedule {
+  id             String    @id @default(cuid())
+  tenantId       String    @map("tenant_id")
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId       String    @map("course_id")
+  sectionId      String?   @map("section_id")
+  instructorId   String?   @map("instructor_id")
+  courseCode     String?   @map("course_code")
+  instructorName String?   @map("instructor_name")
+  dayOfWeek      DayOfWeek @map("day_of_week")
+  startTime      String    @map("start_time")
+  endTime        String    @map("end_time")
+  room           String?
+  building       String?
+  semester       String?
+  year           Int?
+  validBssids    String[]  @default([]) @map("valid_bssids")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  course     Course         @relation(fields: [courseId], references: [id])
+  section    CourseSection? @relation(fields: [sectionId], references: [id])
+  instructor User?          @relation(fields: [instructorId], references: [id])
+
+  @@index([tenantId])
+  @@map("course_schedules")
+}
+
+model AttendanceSession {
+  id                  String        @id @default(cuid())
+  tenantId            String        @map("tenant_id")
+  tenant              Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId            String        @map("course_id")
+  sectionId           String?       @map("section_id")
+  instructorId        String?       @map("instructor_id")
+  courseCode          String?       @map("course_code")
+  courseName          String?       @map("course_name")
+  qrToken             String?       @map("qr_token")
+  expiresAt           DateTime?     @map("expires_at")
+  validBssids         String[]      @default([]) @map("valid_bssids")
+  // When non-empty, the session only counts attendance for the listed
+  // user IDs — used for "special" one-off sessions where the rest of the
+  // class shouldn't be auto-marked absent on end. Empty = full class.
+  restrictedToUserIds String[]      @default([]) @map("restricted_to_user_ids")
+  date                DateTime      @default(now())
+  status              SessionStatus @default(active)
+  roomOverride        String?       @map("room_override")
+  bssidRequired       Boolean       @default(true) @map("bssid_required")
+  startedAt           DateTime      @default(now()) @map("started_at")
+  endedAt             DateTime?     @map("ended_at")
+  isActive            Boolean       @default(true) @map("is_active")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  course     Course             @relation(fields: [courseId], references: [id])
+  section    CourseSection?     @relation(fields: [sectionId], references: [id])
+  instructor User?              @relation(fields: [instructorId], references: [id])
+  records    AttendanceRecord[]
+  flags      CheatingFlag[]
+  excuses    AttendanceExcuse[]
+
+  @@unique([tenantId, qrToken])
+  @@index([courseId, date])
+  @@index([tenantId])
+  @@map("attendance_sessions")
+}
+
+model AttendanceRecord {
+  id                 String              @id @default(cuid())
+  tenantId           String              @map("tenant_id")
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId             String              @map("user_id")
+  sessionId          String?             @map("session_id")
+  courseId           String              @map("course_id")
+  courseCode         String?             @map("course_code")
+  courseName         String?             @map("course_name")
+  date               DateTime            @default(now())
+  status             AttendanceStatus
+  markedAt           DateTime?           @default(now()) @map("marked_at")
+  verificationMethod VerificationMethod? @default(qr_code) @map("verification_method")
+  bssidVerified      Boolean?            @default(false) @map("bssid_verified")
+  bssid              String?
+  qrLatencyMs        Int?                @map("qr_latency_ms")
+  deviceId           String?             @map("device_id")
+  ipAddress          String?             @map("ip_address")
+  deviceInfo         String?             @map("device_info")
+  overridden         Boolean             @default(false)
+  overrideReason     String?             @map("override_reason")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+
+  user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session AttendanceSession? @relation(fields: [sessionId], references: [id])
+  course  Course             @relation(fields: [courseId], references: [id])
+  excuses AttendanceExcuse[]
+
+  @@unique([sessionId, userId])
+  @@index([userId, markedAt])
+  @@index([tenantId])
+  @@map("attendance_records")
+}
+
+model CheatingFlag {
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId         String   @map("user_id")
+  sessionId      String?  @map("session_id")
+  reason         String
+  otherStudentId String?  @map("other_student_id")
+  flaggedAt      DateTime @default(now()) @map("flagged_at")
+  reviewed       Boolean  @default(false)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user         User               @relation("CheatingFlagUser", fields: [userId], references: [id])
+  session      AttendanceSession? @relation(fields: [sessionId], references: [id])
+  otherStudent User?              @relation("CheatingFlagOther", fields: [otherStudentId], references: [id])
+
+  @@index([tenantId])
+  @@map("cheating_flags")
+}
+
+model StudentEnrollment {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String   @map("user_id")
+  courseId   String   @map("course_id")
+  courseCode String?  @map("course_code")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id])
+
+  @@unique([userId, courseId])
+  @@index([tenantId])
+  @@map("student_enrollments")
+}
+
+model AttendanceExcuse {
+  id                 String        @id @default(cuid())
+  tenantId           String        @map("tenant_id")
+  tenant             Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId             String        @map("user_id")
+  attendanceRecordId String?       @map("attendance_record_id")
+  sessionId          String?       @map("session_id")
+  reason             String
+  evidenceUrl        String?       @map("evidence_url")
+  status             RequestStatus @default(pending)
+  reviewedById       String?       @map("reviewed_by_id")
+  reviewedAt         DateTime?     @map("reviewed_at")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  user             User               @relation("ExcuseUser", fields: [userId], references: [id])
+  attendanceRecord AttendanceRecord?  @relation(fields: [attendanceRecordId], references: [id])
+  session          AttendanceSession? @relation(fields: [sessionId], references: [id])
+  reviewedBy       User?              @relation("ExcuseReviewer", fields: [reviewedById], references: [id])
+
+  @@index([tenantId])
+  @@map("attendance_excuses")
+}
+
+// ============================================================================
+// 10. PAYMENTS
+// ============================================================================
+
+model StudentAccount {
+  id                  String    @id @default(cuid())
+  tenantId            String    @map("tenant_id")
+  tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId              String    @unique @map("user_id")
+  balance             Decimal   @default(0.00) @db.Decimal(10, 2)
+  currency            String    @default("EGP")
+  totalPaid           Decimal   @default(0.00) @map("total_paid") @db.Decimal(10, 2)
+  financialAidApplied Decimal   @default(0.00) @map("financial_aid_applied") @db.Decimal(10, 2)
+  paymentPlan         String    @default("semester") @map("payment_plan")
+  lastPaymentDate     DateTime? @map("last_payment_date")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("student_accounts")
+}
+
+model Invoice {
+  id          String          @id @default(cuid())
+  tenantId    String          @map("tenant_id")
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String          @map("user_id")
+  semesterId  String?         @map("semester_id")
+  title       String
+  description String?
+  category    InvoiceCategory @default(other)
+  amount      Decimal         @db.Decimal(10, 2)
+  vatAmount   Decimal         @default(0.00) @map("vat_amount") @db.Decimal(10, 2)
+  totalAmount Decimal         @db.Decimal(10, 2)
+  paid        Decimal         @default(0.00) @db.Decimal(10, 2)
+  balance     Decimal         @db.Decimal(10, 2)
+  status      InvoiceStatus   @default(pending)
+  dueDate     DateTime        @map("due_date")
+  paidAt      DateTime?       @map("paid_at")
+  semester    String?
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  semesterRef  Semester?     @relation(fields: [semesterId], references: [id])
+  transactions Transaction[]
+
+  @@index([userId, status])
+  @@index([tenantId])
+  @@map("invoices")
+}
+
+model Transaction {
+  id                    String            @id @default(cuid())
+  tenantId              String            @map("tenant_id")
+  tenant                Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId                String            @map("user_id")
+  invoiceId             String?           @map("invoice_id")
+  paymentMethodId       String?           @map("payment_method_id")
+  type                  TransactionType
+  method                String?
+  amount                Decimal           @db.Decimal(10, 2)
+  description           String?
+  status                TransactionStatus @default(pending)
+  cardLast4             String?           @map("card_last4")
+  referenceNumber       String?           @map("reference_number")
+  confirmedById         String?           @map("confirmed_by_id")
+  confirmedAt           DateTime?         @map("confirmed_at")
+  notes                 String?
+  // Stripe linkage. `stripeSessionId` is set when the Checkout Session is
+  // created and lets the success page look up the row without exposing the
+  // PaymentIntent ID to the URL. `stripePaymentIntentId` is filled by the
+  // webhook on `payment_intent.succeeded` and is the canonical idempotency
+  // key — the webhook handler checks for an existing row with this value
+  // before creating one, so retries don't double-credit. `stripeChargeId`
+  // supports a future refund flow via Stripe.
+  stripeSessionId       String?           @map("stripe_session_id")
+  stripePaymentIntentId String?           @map("stripe_payment_intent_id")
+  stripeChargeId        String?           @map("stripe_charge_id")
+  createdAt             DateTime          @default(now()) @map("created_at")
+  updatedAt             DateTime          @updatedAt @map("updated_at")
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoice       Invoice?       @relation(fields: [invoiceId], references: [id])
+  paymentMethod PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+
+  @@unique([tenantId, referenceNumber])
+  @@unique([tenantId, stripePaymentIntentId])
+  @@unique([tenantId, stripeSessionId])
+  @@index([tenantId])
+  @@index([stripePaymentIntentId])
+  @@map("transactions")
+}
+
+model PaymentMethod {
+  id          String            @id @default(cuid())
+  tenantId    String            @map("tenant_id")
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String            @map("user_id")
+  type        PaymentMethodType
+  brand       String?
+  last4       String?
+  lastFour    String?           @map("last_four")
+  expiryMonth Int?              @map("expiry_month")
+  expiryYear  Int?              @map("expiry_year")
+  expiryDate  String?           @map("expiry_date")
+  holderName  String?           @map("holder_name")
+  isDefault   Boolean           @default(false) @map("is_default")
+  isActive    Boolean           @default(true) @map("is_active")
+  nickname    String?
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([tenantId])
+  @@map("payment_methods")
+}
+
+enum FeeCategory {
+  registration
+  document
+  lab
+  tuition
+  library
+  housing
+  exam
+  sports
+  other
+
+  @@map("fee_category")
+}
+
+model ServiceFee {
+  id             String      @id @default(cuid())
+  tenantId       String      @map("tenant_id")
+  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  amount         Decimal     @default(0.00) @db.Decimal(10, 2)
+  category       FeeCategory @default(other)
+  processingDays Int         @default(1) @map("processing_days")
+  variable       Boolean     @default(false)
+  isActive       Boolean     @default(true) @map("is_active")
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  serviceRequests ServiceRequest[]
+
+  @@index([tenantId])
+  @@map("service_fees")
+}
+
+model ServiceRequest {
+  id            String   @id @default(cuid())
+  tenantId      String   @map("tenant_id")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId        String   @map("user_id")
+  serviceFeeId  String?  @map("service_fee_id")
+  serviceName   String?  @map("service_name")
+  amount        Decimal? @db.Decimal(10, 2)
+  status        String   @default("pending")
+  description   String?
+  notes         String?
+  processedById String?  @map("processed_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serviceFee  ServiceFee? @relation(fields: [serviceFeeId], references: [id])
+  processedBy User?       @relation("ServiceRequestProcessor", fields: [processedById], references: [id])
+
+  @@index([tenantId])
+  @@map("service_requests")
+}
+
+// ============================================================================
+// 10b. PAYROLL  (Phase 10 — staff employment + monthly payroll runs)
+// ============================================================================
+
+enum EmploymentType {
+  full_time
+  part_time
+  contract
+  hourly
+  intern
+
+  @@map("employment_type")
+}
+
+enum PayrollRunStatus {
+  draft
+  finalized
+  paid
+  cancelled
+
+  @@map("payroll_run_status")
+}
+
+enum DeductionType {
+  tax
+  insurance
+  loan
+  advance
+  custom
+
+  @@map("deduction_type")
+}
+
+/// Per-staff (professor / TA / SA / admin) HR record. One row per user, lazily
+/// created the first time an admin opens the Employment tab on UserEditPage.
+/// Decoupled from `User` so students don't carry these fields.
+model EmployeeProfile {
+  id              String         @id @default(cuid())
+  tenantId        String         @map("tenant_id")
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId          String         @unique @map("user_id")
+  employmentType  EmploymentType @default(full_time) @map("employment_type")
+  hireDate        DateTime?      @map("hire_date")
+  terminationDate DateTime?      @map("termination_date")
+  position        String?
+  office          String?
+  payrollId       String?        @map("payroll_id")
+  contractType    String?        @map("contract_type")
+  baseSalary      Decimal        @default(0.00) @map("base_salary") @db.Decimal(12, 2)
+  currency        String         @default("EGP")
+  bankName        String?        @map("bank_name")
+  bankAccount     String?        @map("bank_account")
+  taxId           String?        @map("tax_id")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, payrollId])
+  @@index([tenantId])
+  @@map("employee_profiles")
+}
+
+/// One PayrollRun per period (e.g. "2026-04"). Creates a Payslip per staff
+/// member with an EmployeeProfile at run time. Status flow:
+///   draft → finalized → paid  (or cancelled).
+model PayrollRun {
+  id              String           @id @default(cuid())
+  tenantId        String           @map("tenant_id")
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  period          String // "YYYY-MM"
+  runDate         DateTime         @default(now()) @map("run_date")
+  status          PayrollRunStatus @default(draft)
+  totalGross      Decimal          @default(0.00) @map("total_gross") @db.Decimal(14, 2)
+  totalNet        Decimal          @default(0.00) @map("total_net") @db.Decimal(14, 2)
+  totalDeductions Decimal          @default(0.00) @map("total_deductions") @db.Decimal(14, 2)
+  currency        String           @default("EGP")
+  notes           String?
+  runById         String?          @map("run_by_id")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  runBy    User?     @relation("PayrollRunner", fields: [runById], references: [id])
+  payslips Payslip[]
+
+  @@unique([tenantId, period])
+  @@index([tenantId])
+  @@map("payroll_runs")
+}
+
+model Payslip {
+  id              String   @id @default(cuid())
+  tenantId        String   @map("tenant_id")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  payrollRunId    String   @map("payroll_run_id")
+  userId          String   @map("user_id")
+  gross           Decimal  @db.Decimal(12, 2)
+  deductionsTotal Decimal  @default(0.00) @map("deductions_total") @db.Decimal(12, 2)
+  net             Decimal  @db.Decimal(12, 2)
+  generatedAt     DateTime @default(now()) @map("generated_at")
+  pdfUrl          String?  @map("pdf_url")
+  notes           String?
+
+  payrollRun PayrollRun  @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  user       User        @relation("PayslipUser", fields: [userId], references: [id])
+  deductions Deduction[]
+
+  @@unique([payrollRunId, userId])
+  @@index([userId])
+  @@index([tenantId])
+  @@map("payslips")
+}
+
+model Deduction {
+  id          String        @id @default(cuid())
+  tenantId    String        @map("tenant_id")
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  payslipId   String        @map("payslip_id")
+  type        DeductionType @default(custom)
+  amount      Decimal       @db.Decimal(12, 2)
+  description String?
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  payslip Payslip @relation(fields: [payslipId], references: [id], onDelete: Cascade)
+
+  @@index([payslipId])
+  @@index([tenantId])
+  @@map("deductions")
+}
+
+// ============================================================================
+// 11. STUDENT AFFAIRS
+// ============================================================================
+
+model DepartmentContact {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deptKey     String?  @map("dept_key")
+  department  String
+  title       String
+  name        String?
+  role        String?
+  email       String?
+  phone       String?
+  office      String?
+  hours       String?
+  location    String?
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, deptKey])
+  @@index([tenantId])
+  @@map("department_contacts")
+}
+
+// ============================================================================
+// Plan 7 Phase 4 — Generic Form Composer
+// Any non-student role can create a form (questions + recipient targeting +
+// schedule), students respond, creator + admin review. One response per
+// user per form (re-submission edits the same row).
+// ============================================================================
+model Form {
+  id            String   @id @default(cuid())
+  tenantId      String   @map("tenant_id")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  bannerImage   String?  @map("banner_image")
+  startDate     DateTime @map("start_date")
+  dueDate       DateTime @map("due_date")
+  // Recipient targeting (mirrors Announcement.targetRoles/Levels/UserIds).
+  targetRoles   String[] @default([]) @map("target_roles")
+  targetLevels  Int[]    @default([]) @map("target_levels")
+  targetUserIds String[] @default([]) @map("target_user_ids")
+  isPublished   Boolean  @default(false) @map("is_published")
+  createdById   String   @map("created_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  createdBy User           @relation("FormCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  questions FormQuestion[]
+  responses FormResponse[]
+
+  @@index([createdById])
+  @@index([dueDate])
+  @@index([tenantId])
+  @@map("forms")
+}
+
+model FormQuestion {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  formId    String   @map("form_id")
+  order     Int      @default(0)
+  // 'text' | 'textarea' | 'multiple-choice' | 'checkboxes' | 'dropdown' | 'date' | 'image-upload' | 'file-upload'
+  kind      String
+  label     String
+  required  Boolean  @default(false)
+  options   Json     @default("[]")
+  maxLength Int?     @map("max_length")
+  imageUrl  String?  @map("image_url")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  form    Form                 @relation(fields: [formId], references: [id], onDelete: Cascade)
+  answers FormResponseAnswer[]
+
+  @@index([formId, order])
+  @@index([tenantId])
+  @@map("form_questions")
+}
+
+model FormResponse {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  formId       String   @map("form_id")
+  respondentId String   @map("respondent_id")
+  submittedAt  DateTime @default(now()) @map("submitted_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  form       Form                 @relation(fields: [formId], references: [id], onDelete: Cascade)
+  respondent User                 @relation("FormRespondent", fields: [respondentId], references: [id], onDelete: Cascade)
+  answers    FormResponseAnswer[]
+
+  @@unique([formId, respondentId])
+  @@index([formId])
+  @@index([respondentId])
+  @@index([tenantId])
+  @@map("form_responses")
+}
+
+model FormResponseAnswer {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  responseId   String   @map("response_id")
+  questionId   String   @map("question_id")
+  textValue    String?  @map("text_value")
+  choiceValues String[] @default([]) @map("choice_values")
+  fileUrl      String?  @map("file_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  response FormResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  question FormQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([responseId, questionId])
+  @@index([questionId])
+  @@index([tenantId])
+  @@map("form_response_answers")
+}
+
+// ============================================================================
+// Plan 7 Phase 6 — Financial Aid Request
+// Student-facing application; admin or `financial` role reviews; on approve
+// a NEGATIVE-amount Transaction is created against the next open invoice
+// to deliver the discount.
+// ============================================================================
+model FinancialAidRequest {
+  id               String    @id @default(cuid())
+  tenantId         String    @map("tenant_id")
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId           String    @map("user_id")
+  applicantIncome  Decimal?  @map("applicant_income") @db.Decimal(12, 2)
+  dependents       Int?
+  requestedAmount  Decimal   @map("requested_amount") @db.Decimal(12, 2)
+  justification    String
+  supportingDocs   Json      @default("[]") @map("supporting_docs")
+  // 'pending' | 'approved' | 'rejected' | 'withdrawn'
+  status           String    @default("pending")
+  reviewedById     String?   @map("reviewed_by_id")
+  reviewedAt       DateTime? @map("reviewed_at")
+  reviewNote       String?   @map("review_note")
+  awardedAmount    Decimal?  @map("awarded_amount") @db.Decimal(12, 2)
+  awardedInvoiceId String?   @map("awarded_invoice_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  user     User  @relation("FinancialAidApplicant", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("FinancialAidReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([tenantId])
+  @@map("financial_aid_requests")
+}
+
+model RequestType {
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  typeKey        String?  @map("type_key")
+  name           String
+  department     String?
+  description    String?
+  category       String?
+  requiredDocs   String[] @default([]) @map("required_docs")
+  processingDays Int      @default(3) @map("processing_days")
+  estimatedDays  Int      @default(5) @map("estimated_days")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  supportRequests SupportRequest[]
+
+  @@unique([tenantId, typeKey])
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("request_types")
+}
+
+// SA-managed taxonomy for complaint categories. The student "Submit a
+// Complaint" form fetches this list at render time (no more hardcoded
+// categories), and SA / admin filter their queues by `category_key`.
+// Free-text `Complaint.category` column stores the chosen key.
+model ComplaintCategory {
+  id              String   @id @default(cuid())
+  tenantId        String   @map("tenant_id")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryKey     String   @map("category_key")
+  name            String
+  description     String?
+  icon            String?
+  defaultSeverity String   @default("medium") @map("default_severity")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, categoryKey])
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("complaint_categories")
+}
+
+model SupportRequest {
+  id             String          @id @default(cuid())
+  tenantId       String          @map("tenant_id")
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId         String          @map("user_id")
+  typeId         String?         @map("type_id")
+  studentName    String?         @map("student_name")
+  studentEmail   String?         @map("student_email")
+  type           String?
+  typeName       String?         @map("type_name")
+  subject        String
+  description    String
+  message        String?
+  status         RequestStatus   @default(pending)
+  priority       RequestPriority @default(medium)
+  assignedToId   String?         @map("assigned_to_id")
+  response       String?
+  resolution     String?
+  notes          String?
+  attachments    String[]        @default([])
+  attachmentPath String?         @map("attachment_path")
+  estimatedDays  Int?            @map("estimated_days")
+  resolvedAt     DateTime?       @map("resolved_at")
+  // Processor tracking — written when SA / admin flips status to in_progress
+  // (so the student sees "Being processed by Name — since timestamp" inline).
+  processedById  String?         @map("processed_by_id")
+  processedAt    DateTime?       @map("processed_at")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestType RequestType? @relation(fields: [typeId], references: [id])
+  assignedTo  User?        @relation("SupportRequestAssignee", fields: [assignedToId], references: [id])
+  processedBy User?        @relation("SupportRequestProcessor", fields: [processedById], references: [id])
+
+  @@index([tenantId])
+  @@map("support_requests")
+}
+
+model Announcement {
+  id             String               @id @default(cuid())
+  tenantId       String               @map("tenant_id")
+  tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title          String
+  subtitle       String?
+  content        String
+  fullContent    String?              @map("full_content")
+  date           DateTime             @default(now())
+  authorId       String?              @map("author_id")
+  author         String               @default("Administration")
+  readTime       String?              @map("read_time")
+  category       AnnouncementCategory @default(general)
+  priority       AnnouncementPriority @default(normal)
+  imageUrl       String?              @map("image_url")
+  audience       String               @default("all-students")
+  audienceDetail String?              @map("audience_detail")
+  source         String               @default("admin")
+  targetRoles    UserRole[]           @default([])
+  // When non-empty, only these users see the announcement (overrides
+  // targetRoles + audience). Used by "Specific Students" recipient mode.
+  targetUserIds  String[]             @default([]) @map("target_user_ids")
+  // When non-empty, only students whose AcademicProfile.level is in this set
+  // see the announcement. Used by "Specific Levels" recipient mode.
+  targetLevels   Int[]                @default([]) @map("target_levels")
+  isPublished    Boolean              @default(true) @map("is_published")
+  publishedAt    DateTime?            @map("published_at")
+  expiresAt      DateTime?            @map("expires_at")
+  attachmentPath String?              @map("attachment_path")
+  tags           String[]             @default([])
+  viewCount      Int                  @default(0) @map("view_count")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  authorUser User? @relation("AnnouncementAuthor", fields: [authorId], references: [id])
+
+  @@index([authorId, publishedAt])
+  @@index([tenantId])
+  @@map("announcements")
+}
+
+model Complaint {
+  id              String            @id @default(cuid())
+  tenantId        String            @map("tenant_id")
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  complainantId   String            @map("complainant_id")
+  targetUserId    String?           @map("target_user_id")
+  category        String
+  severity        ComplaintSeverity @default(medium)
+  subject         String
+  description     String
+  status          RequestStatus     @default(pending)
+  resolutionNotes String?           @map("resolution_notes")
+  resolvedById    String?           @map("resolved_by_id")
+  resolvedAt      DateTime?         @map("resolved_at")
+  // Processor tracking — mirrors SupportRequest. Written when SA / admin
+  // flips status to in_progress.
+  processedById   String?           @map("processed_by_id")
+  processedAt     DateTime?         @map("processed_at")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  complainant User  @relation("Complainant", fields: [complainantId], references: [id])
+  targetUser  User? @relation("ComplaintTarget", fields: [targetUserId], references: [id])
+  resolvedBy  User? @relation("ComplaintResolver", fields: [resolvedById], references: [id])
+  processedBy User? @relation("ComplaintProcessor", fields: [processedById], references: [id])
+
+  @@index([tenantId])
+  @@map("complaints")
+}
+
+// ============================================================================
+// 12. CHAT & NOTIFICATIONS
+// ============================================================================
+
+model ChatMessage {
+  id             String          @id @default(cuid())
+  tenantId       String          @map("tenant_id")
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId       String?         @map("course_id")
+  courseCode     String?         @map("course_code")
+  // Per-section room key. Adding this to the legacy ChatMessage table so
+  // messages on Lec01 and Sec01 of the same course don't cross-pollinate.
+  // NULL for legacy rows that pre-date the per-section split — they
+  // continue to render in the course-code-only fallback room. New writes
+  // always set this.
+  sectionId      String?         @map("section_id")
+  userId         String?         @map("user_id")
+  senderId       String?         @map("sender_id")
+  senderName     String          @map("sender_name")
+  senderAvatar   String?         @map("sender_avatar")
+  content        String?
+  message        String?
+  type           ChatMessageType @default(text)
+  status         MessageStatus   @default(sent)
+  isDeleted      Boolean         @default(false) @map("is_deleted")
+  deletedById    String?         @map("deleted_by_id")
+  pinned         Boolean         @default(false)
+  system         Boolean         @default(false)
+  editedAt       DateTime?       @map("edited_at")
+  attachmentPath String?         @map("attachment_path")
+  sentAt         DateTime        @default(now()) @map("sent_at")
+  createdAt      DateTime        @default(now()) @map("created_at")
+
+  course      Course?          @relation(fields: [courseId], references: [id])
+  user        User?            @relation(fields: [userId], references: [id])
+  attachments ChatAttachment[]
+
+  @@index([courseId, sentAt])
+  @@index([tenantId])
+  @@map("chat_messages")
+}
+
+model ChatAttachment {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messageId String   @map("message_id")
+  name      String
+  filePath  String?  @map("file_path")
+  fileName  String?  @map("file_name")
+  fileType  String?  @map("file_type")
+  mimeType  String?  @map("mime_type")
+  fileSize  Int?     @map("file_size")
+  size      Int?
+  url       String?
+  thumbnail String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("chat_attachments")
+}
+
+model MutedChat {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String   @map("user_id")
+  courseId   String?  @map("course_id")
+  courseCode String?  @map("course_code")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course? @relation(fields: [courseId], references: [id])
+
+  @@unique([userId, courseId])
+  @@index([tenantId])
+  @@map("muted_chats")
+}
+
+model Notification {
+  id            String               @id @default(cuid())
+  tenantId      String               @map("tenant_id")
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId        String               @map("user_id")
+  type          NotificationType     @default(info)
+  title         String
+  message       String?
+  content       String?
+  isRead        Boolean              @default(false) @map("is_read")
+  readAt        DateTime?            @map("read_at")
+  referenceId   String?              @map("reference_id")
+  referenceType String?              @map("reference_type")
+  priority      NotificationPriority @default(normal)
+  senderId      String?              @map("sender_id")
+  courseCode    String?              @map("course_code")
+  createdAt     DateTime             @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, isRead])
+  @@index([tenantId])
+  @@map("notifications")
+}
+
+// Standard Web Push (VAPID) subscription. Used for iOS PWA background push
+// (iOS 16.4+ installed PWA) and any browser supporting the Web Push API, as a
+// peer of FCM (which covers Android/desktop + native Capacitor device tokens).
+// One row per browser/device push endpoint. Pruned on 404/410 send failures.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String
+  p256dh    String
+  auth      String
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, endpoint])
+  @@index([tenantId])
+  @@index([userId])
+  @@map("push_subscriptions")
+}
+
+// ============================================================================
+// 13. LIVE SESSIONS
+// ============================================================================
+
+model LiveSession {
+  id           String        @id @default(cuid())
+  tenantId     String        @map("tenant_id")
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId     String        @map("course_id")
+  hostId       String        @map("host_id")
+  courseCode   String?       @map("course_code")
+  title        String
+  description  String?
+  scheduledFor DateTime?     @map("scheduled_for")
+  scheduledAt  DateTime?     @map("scheduled_at")
+  duration     Int           @default(60)
+  type         SessionType   @default(lecture)
+  status       SessionStatus @default(scheduled)
+  meetingUrl   String?       @map("meeting_url")
+  meetingLink  String?       @map("meeting_link")
+  recordingUrl String?       @map("recording_url")
+  startedAt    DateTime?     @map("started_at")
+  endedAt      DateTime?     @map("ended_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  course    Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  host      User              @relation("SessionHost", fields: [hostId], references: [id])
+  attendees SessionAttendee[]
+
+  @@index([tenantId])
+  @@map("live_sessions")
+}
+
+model SessionAttendee {
+  id        String    @id @default(cuid())
+  tenantId  String    @map("tenant_id")
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessionId String    @map("session_id")
+  userId    String    @map("user_id")
+  joinedAt  DateTime? @map("joined_at")
+  leftAt    DateTime? @map("left_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  session LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, userId])
+  @@index([tenantId])
+  @@map("session_attendees")
+}
+
+// ============================================================================
+// 14. ADMIN SYSTEM
+// ============================================================================
+
+model SystemSettings {
+  id                          String    @id @default(cuid())
+  tenantId                    String    @unique @map("tenant_id")
+  tenant                      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  maintenanceMode             Boolean   @default(false) @map("maintenance_mode")
+  maintenanceMessage          String    @default("") @map("maintenance_message")
+  registrationEnabled         Boolean   @default(true) @map("registration_enabled")
+  // When true, EVERY student registration is routed through SA review
+  // before becoming active. When false (default per owner directive
+  // 2026-05-17), regular registrations auto-approve; probation /
+  // above-level / late-window / advisor-required cases ALWAYS force
+  // pending regardless. Read by the registration handler.
+  registrationGatekeepEnabled Boolean   @default(false) @map("registration_gatekeep_enabled")
+  maxCreditsPerSemester       Int       @default(21) @map("max_credits_per_semester")
+  minCreditsPerSemester       Int       @default(12) @map("min_credits_per_semester")
+  gradeSubmissionDeadline     DateTime? @map("grade_submission_deadline")
+  currentSemester             String    @default("Fall 2025") @map("current_semester")
+  academicYear                String    @default("2025-2026") @map("academic_year")
+  emailNotifications          Boolean   @default(true) @map("email_notifications")
+  smsNotifications            Boolean   @default(false) @map("sms_notifications")
+  backupFrequency             String    @default("daily") @map("backup_frequency")
+  sessionTimeoutMinutes       Int       @default(30) @map("session_timeout_minutes")
+  passwordMinLength           Int       @default(8) @map("password_min_length")
+  passwordRequireUppercase    Boolean   @default(true) @map("password_require_uppercase")
+  passwordRequireNumber       Boolean   @default(true) @map("password_require_number")
+  passwordRequireSpecial      Boolean   @default(false) @map("password_require_special")
+  rolePermissions             Json?     @map("role_permissions")
+  // Phase E — admin-configurable timetable policy:
+  //   { workingDays: [day], slotMinutes, dayStart 'HH:MM', dayEnd 'HH:MM' }
+  // Drives the auto-scheduler grid (see backend/lib/schedule-policy.js).
+  schedulePolicy              Json?     @map("schedule_policy")
+  // Phase 5 — admin-editable grading config. JSON shape (see backend/lib/
+  // grading-rules.js for the canonical default + Zod schema):
+  //   { scale: [{letter, minPercent, qualityPoints}], academicStanding: {...},
+  //     credits: { min, max, graduationTotal } }
+  // When null, callers fall back to DEFAULT_RULES.
+  gradingRules                Json?     @map("grading_rules")
+  // Phase 5 follow-up — real Course Configurations + Academic Calendar fields
+  // (replaces the static info cards that previously rendered as mock UI).
+  // courseCodePattern: regex validated on POST /api/admin/courses.
+  // defaultSectionCapacity: default cap for new CourseSection rows.
+  // requirePrerequisites: when true, registration flow blocks signup if prereqs unmet.
+  // holidays: array of { date: 'YYYY-MM-DD', label: string } objects.
+  courseCodePattern           String?   @default("^[A-Z]{2,4}[0-9]{3}$") @map("course_code_pattern")
+  defaultSectionCapacity      Int       @default(30) @map("default_section_capacity")
+  requirePrerequisites        Boolean   @default(true) @map("require_prerequisites")
+  holidays                    Json?     @map("holidays")
+  appName                     String?   @default("UniFlow") @map("app_name")
+  language                    String?   @default("en") @map("language")
+  timezone                    String?   @default("Africa/Cairo") @map("timezone")
+  // Phase 9 — institution-wide currency. Three-letter ISO 4217 code. Used by
+  // every monetary display in the admin Financials surface and the student
+  // Payments page. Frontend reads it via the public /api/admin/system-settings
+  // endpoint (no admin gate needed for the read because it's purely cosmetic).
+  currency                    String    @default("EGP") @map("currency")
+  // Phase 12 follow-up — institution-configurable academic structure.
+  // numberOfAcademicLevels drives the level chips in AnnouncementComposer and
+  // anywhere "Level 1, Level 2, …" needs to be enumerated. attendanceRules
+  // stores the percentage thresholds for the warning / barred regulations
+  // (mirrors the gradingRules JSON shape — JSON column so a tenant can
+  // override the schema without a code change).
+  numberOfAcademicLevels      Int       @default(4) @map("number_of_academic_levels")
+  attendanceRules             Json?     @map("attendance_rules")
+  // Phase 12 follow-up — admin-editable credit-hour caps. Replaces the nine
+  // hardcoded constants that used to live in backend/lib/credit-limits.js.
+  // JSON shape (see that file for the canonical default + Zod schema):
+  //   { summer: 9, seniorBonus: 21, freshmanSecondChance: 19,
+  //     freshmanSecondChanceMinGpa: 1.66, highGpa: 21, normal: 19,
+  //     probation: 12, highGpaThreshold: 3.33, goodStandingThreshold: 2.0 }
+  // When null, callers fall back to DEFAULT_CREDIT_POLICY.
+  creditLimitPolicy           Json?     @map("credit_limit_policy")
+  // Level progression — credit-hour thresholds that drive a student's academic
+  // level. Shape:
+  //   { thresholds: [{ level: 2, minCredits: 28 }, { level: 3, minCredits: 64 }, …] }
+  // Level 1 is implicit at 0 credits. computeLevel(credits, policy) returns the
+  // highest level whose minCredits is ≤ student's earned credits. When null,
+  // callers fall back to DEFAULT_LEVEL_PROGRESSION in backend/lib/level-progression.js.
+  levelProgression            Json?     @map("level_progression")
+  // Plan 4 Phase 1 — graduation requirements (FCDS Article 8). Shape:
+  //   { minTotalCredits: 140, minMainSemesters: 7, minCgpa: 2.0 }
+  // When null, callers fall back to DEFAULT_GRADUATION_POLICY in
+  // backend/lib/graduation-policy.js. Surfaced on the student transcript as an
+  // "Eligible to graduate" pill.
+  graduationPolicy            Json?     @map("graduation_policy")
+  // Plan 4 Phase 1 — semester durations (FCDS Article 5). Shape:
+  //   { fallWeeks: 15, springWeeks: 15, summerWeeks: 8 }
+  // Future Phase 3 (registration / add-drop / withdrawal windows) will derive
+  // its week-numbered windows from these values.
+  semesterDurations           Json?     @map("semester_durations")
+  // Plan 4 Phase 3 — late-reg / add-drop / withdrawal week ranges per main /
+  // summer term (FCDS Articles 13, 14, 15). Shape (see backend/lib/
+  // registration-windows.js for the Zod schema):
+  //   { main: { lateRegistration: { startWeek, endWeek }, addDrop: {...},
+  //     withdrawal: {...} }, summer: { same shape } }
+  // When null, callers fall back to DEFAULT_WINDOWS_POLICY.
+  windowsPolicy               Json?     @map("windows_policy")
+  // Plan 4 Phase 4 — incomplete-grade policy (FCDS Article 17). Shape:
+  //   { minTermWorkPercent: 60, maxIncompletesPerStudent: 3, makeupExamWindowDays: 7 }
+  incompletePolicy            Json?     @map("incomplete_policy")
+  // Plan 4 Phase 4 — course-repetition policy (FCDS Article 18). Shape:
+  //   { retakesCountedForGpa: 8, countAllAttemptsBeyond: true,
+  //     allowImprovementForProbation: true, maxGradeAfterRetake: 'C',
+  //     maxGradeAppliesToFirstRetakeOnly: false, preserveOriginalIfHigher: true }
+  repetitionPolicy            Json?     @map("repetition_policy")
+  // Plan 4 Phase 5 — graduation-honors policy (FCDS Article 22). Shape:
+  //   { maxMainSemesters: 8, perSemesterMinGpa: 3.0, cumulativeMinGpa: 3.4,
+  //     highHonorsCumMinGpa: 3.8, disqualifyingGrades: ['F','FW','MW'],
+  //     requireNoDisciplinary: true }
+  honorsPolicy                Json?     @map("honors_policy")
+  // Plan 4 Phase 6 — enrollment workflow caps (FCDS Articles 20, 21).
+  //   { maxSuspensionsTotal: 4, maxConsecutive: 4,
+  //     militaryWithdrawalCountsAgainstCap: false,
+  //     reEnrollmentWithinSemesters: 4 }
+  suspensionPolicy            Json?     @map("suspension_policy")
+  // Plan 4 Phase 7 — Article 25 mobility / exchange caps + Article 24
+  // visiting student per-term limits.
+  //   { maxExternalPercentOfTotal: 0.25, includeInCgpa: true,
+  //     visitingMaxPerMain: 12, visitingMaxPerSummer: 9 }
+  mobilityPolicy              Json?     @map("mobility_policy")
+  // Plan 4 Phase 8 — academic-advisor approval gate (Article 12).
+  //   { requireAdvisorApproval: true, autoApproveBelowCredits: 0,
+  //     gracePeriodHours: 0, restrictPickerToFlaggedProfessors: true }
+  // When null, callers fall back to DEFAULT_ADVISOR_POLICY in
+  // backend/lib/advisor-policy.js.
+  advisorPolicy               Json?     @map("advisor_policy")
+  // Plan 4 Phase 9 — Credit Hour Definition (FCDS Article 6).
+  //   { lectureHoursPerCredit: 1, practicalHoursPerCredit: 2,
+  //     appliedTrainingHoursPerCredit: 3, fieldTrainingHoursPerCredit: 4 }
+  // When null, callers fall back to DEFAULT_CREDIT_HOUR_DEFINITION in
+  // backend/lib/credit-hour-definition.js.
+  creditHourDefinition        Json?     @map("credit_hour_definition")
+  // Plan 6 — institution-wide brand + regulatory framework labels. Shape:
+  //   { institutionName: 'FCDS, Alexandria University', productName: 'UniFlow',
+  //     articleRefsVisible: false, regulatoryFramework: 'FCDS',
+  //     brandedResetLabels: false }
+  // Hides "FCDS Article N" prefixes from user-visible help text by default so
+  // a deployment to a different institution doesn't ship the source-institution
+  // branding. Read via the public /api/public-settings/institution endpoint.
+  institutionConfig           Json?     @map("institution_config")
+  // Plan 8 Phase 1 — Brand theme. Admin-customisable wordmark + 3-color
+  // palette. Shape:
+  //   { productName: 'UniFlow', brandPrimary: '#6A3FF4',
+  //     brandSecondary: '#A855F7', brandAccent: '#7B5AFF',
+  //     logoSegments: [{text:'Uni',color:'#6A3FF4'},{text:'Flow',color:'#FFFFFF'}] | null }
+  // Read via the public /api/public-settings/brand endpoint; injected as
+  // CSS custom properties on <html> by BrandContext.tsx so Tailwind utility
+  // classes like `text-brand-primary` pick up the live value.
+  brandConfig                 Json?     @map("brand_config")
+  updatedAt                   DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("system_settings")
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  tenantId      String   @map("tenant_id")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  action        String
+  entityType    String?  @map("entity_type")
+  entityId      String?  @map("entity_id")
+  targetUserId  String?  @map("target_user_id")
+  oldValues     Json?    @map("old_values")
+  newValues     Json?    @map("new_values")
+  details       Json?
+  performedById String?  @map("performed_by_id")
+  performedBy   String?  @map("performed_by")
+  ipAddress     String?  @map("ip_address")
+  userAgent     String?  @map("user_agent")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  performer User? @relation("AuditPerformer", fields: [performedById], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@index([performedById])
+  @@map("audit_logs")
+}
+
+// ============================================================================
+// 15. RAG CHATBOT
+// ============================================================================
+
+model ChatbotConversation {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  sessionId String?  @map("session_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatbotMessage[]
+
+  @@unique([tenantId, sessionId])
+  @@index([tenantId])
+  @@map("chatbot_conversations")
+}
+
+model ChatbotMessage {
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversationId String   @map("conversation_id")
+  role           String
+  content        String
+  language       String   @default("en")
+  enhanced       Boolean  @default(false)
+  fallback       Boolean  @default(false)
+  citations      Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation ChatbotConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("chatbot_messages")
+}
+
+// ============================================================================
+// ADDITIONAL NEW MODELS
+// ============================================================================
+
+model CoursePrerequisite {
+  id                   String   @id @default(cuid())
+  tenantId             String   @map("tenant_id")
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  courseId             String   @map("course_id")
+  prerequisiteCourseId String   @map("prerequisite_course_id")
+  minGrade             String?  @map("min_grade")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  course             Course @relation("CoursePrereqs", fields: [courseId], references: [id])
+  prerequisiteCourse Course @relation("PrereqOf", fields: [prerequisiteCourseId], references: [id])
+
+  @@unique([courseId, prerequisiteCourseId])
+  @@index([tenantId])
+  @@map("course_prerequisites")
+}
+
+model CurrentTerm {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  semesterId String   @unique @map("semester_id")
+  setAt      DateTime @default(now()) @map("set_at")
+  setById    String?  @map("set_by_id")
+
+  semester Semester @relation(fields: [semesterId], references: [id])
+  setBy    User?    @relation("CurrentTermSetter", fields: [setById], references: [id])
+
+  @@index([tenantId])
+  @@map("current_term")
+}
+
+model CourseSectionTA {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sectionId    String   @map("section_id")
+  taId         String   @map("ta_id")
+  assignedById String?  @map("assigned_by_id")
+  assignedAt   DateTime @default(now()) @map("assigned_at")
+
+  section    CourseSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  ta         User          @relation("TAAssignments", fields: [taId], references: [id], onDelete: Cascade)
+  assignedBy User?         @relation("TAAssigner", fields: [assignedById], references: [id])
+
+  @@unique([sectionId, taId])
+  @@index([tenantId])
+  @@map("course_section_tas")
+}
+
+model ChatGroup {
+  id              String   @id @default(cuid())
+  tenantId        String   @map("tenant_id")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sectionId       String   @unique @map("section_id")
+  name            String
+  // Admin-editable group blurb — pinned at the top of the chat header.
+  description     String?
+  photoUrl        String?  @map("photo_url")
+  mutedAll        Boolean  @default(false) @map("muted_all")
+  pinnedMessageId String?  @map("pinned_message_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  section  CourseSection      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  members  ChatMember[]
+  messages GroupChatMessage[]
+
+  @@index([tenantId])
+  @@map("chat_groups")
+}
+
+model ChatMember {
+  id          String         @id @default(cuid())
+  tenantId    String         @map("tenant_id")
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  chatGroupId String         @map("chat_group_id")
+  userId      String         @map("user_id")
+  role        ChatMemberRole @default(student)
+  // Per-member indefinite mute — student silences the group's notifications
+  // (not its messages). `muted_until` (timed mute) still exists as a separate
+  // mechanism for "mute for 8 hours" UX; this flag is the WhatsApp default.
+  muted       Boolean        @default(false)
+  mutedUntil  DateTime?      @map("muted_until")
+  joinedAt    DateTime       @default(now()) @map("joined_at")
+
+  chatGroup ChatGroup @relation(fields: [chatGroupId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatGroupId, userId])
+  @@index([tenantId])
+  @@map("chat_members")
+}
+
+model GroupChatMessage {
+  id             String          @id @default(cuid())
+  tenantId       String          @map("tenant_id")
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  chatGroupId    String          @map("chat_group_id")
+  senderId       String          @map("sender_id")
+  content        String?
+  type           ChatMessageType @default(text)
+  deleted        Boolean         @default(false)
+  deletedById    String?         @map("deleted_by_id")
+  pinned         Boolean         @default(false)
+  attachmentPath String?         @map("attachment_path")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  chatGroup ChatGroup @relation(fields: [chatGroupId], references: [id], onDelete: Cascade)
+  sender    User      @relation("GroupMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  deletedBy User?     @relation("GroupMessageDeleter", fields: [deletedById], references: [id])
+
+  @@index([chatGroupId, createdAt])
+  @@index([tenantId])
+  @@map("group_chat_messages")
+}
+
+model SystemBackup {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind        String
+  path        String?
+  bytes       BigInt?
+  status      String   @default("pending")
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  createdBy User? @relation("BackupCreator", fields: [createdById], references: [id])
+
+  @@index([tenantId])
+  @@map("system_backups")
+}
+
+// ============================================================================
+// 16. NAME CHANGE REQUESTS
+// ============================================================================
+
+enum NameChangeStatus {
+  pending
+  approved
+  rejected
+}
+
+// Plan 4 Phase 6 — shared lifecycle for the three enrollment workflows
+// (suspension, cancellation, programme change). `withdrawn` lets a student
+// retract their own request before SA reviews it.
+enum SuspensionStatus {
+  pending
+  approved
+  rejected
+  withdrawn
+}
+
+// Plan 4 Phase 6 — Article 20 (suspension), Article 21 (cancellation), and
+// Article 23 (programme change). Three sibling models that all share the
+// pending → approved/rejected/withdrawn lifecycle but carry different
+// workflow-specific fields.
+model EnrollmentSuspension {
+  id           String           @id @default(cuid())
+  tenantId     String           @map("tenant_id")
+  tenant       Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId       String           @map("user_id")
+  user         User             @relation("SuspensionUser", fields: [userId], references: [id], onDelete: Cascade)
+  reason       String
+  semesters    Int              @default(1)
+  status       SuspensionStatus @default(pending)
+  reviewedById String?          @map("reviewed_by_id")
+  reviewedBy   User?            @relation("SuspensionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?        @map("reviewed_at")
+  reviewNote   String?          @map("review_note")
+  isMilitary   Boolean          @default(false) @map("is_military")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([status])
+  @@index([tenantId])
+  @@map("enrollment_suspensions")
+}
+
+model EnrollmentCancellation {
+  id                      String           @id @default(cuid())
+  tenantId                String           @map("tenant_id")
+  tenant                  Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId                  String           @map("user_id")
+  user                    User             @relation("CancellationUser", fields: [userId], references: [id], onDelete: Cascade)
+  reason                  String
+  status                  SuspensionStatus @default(pending)
+  reviewedById            String?          @map("reviewed_by_id")
+  reviewedBy              User?            @relation("CancellationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt              DateTime?        @map("reviewed_at")
+  reviewNote              String?          @map("review_note")
+  reEnrollmentRequestedAt DateTime?        @map("re_enrollment_requested_at")
+  reEnrollmentApprovedAt  DateTime?        @map("re_enrollment_approved_at")
+  reEnrollmentReason      String?          @map("re_enrollment_reason")
+  createdAt               DateTime         @default(now()) @map("created_at")
+  updatedAt               DateTime         @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([status])
+  @@index([tenantId])
+  @@map("enrollment_cancellations")
+}
+
+model ProgrammeChange {
+  id              String           @id @default(cuid())
+  tenantId        String           @map("tenant_id")
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId          String           @map("user_id")
+  user            User             @relation("ProgrammeChangeUser", fields: [userId], references: [id], onDelete: Cascade)
+  fromProgramCode String?          @map("from_program_code")
+  toProgramCode   String           @map("to_program_code")
+  reason          String
+  status          SuspensionStatus @default(pending)
+  reviewedById    String?          @map("reviewed_by_id")
+  reviewedBy      User?            @relation("ProgrammeChangeReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?        @map("reviewed_at")
+  reviewNote      String?          @map("review_note")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([status])
+  @@index([tenantId])
+  @@map("programme_changes")
+}
+
+// Plan 4 Phase 7 — Article 25a: external credit transfer for FCDS students
+// who took courses at another faculty / university / abroad and want them
+// counted toward their programme. Capped at 25% of graduation total by
+// default; the cap is enforced at approval time, not submission.
+
+// Plan 4 Phase 7 — Article 24: students from same/other faculty or other
+// universities attend a course as auditors. `userId` is nullable for
+// non-FCDS auditors (in which case `externalAuditorName/Email` are required).
+
+model NameChangeRequest {
+  id                 String           @id @default(cuid())
+  tenantId           String           @map("tenant_id")
+  tenant             Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId             String           @map("user_id")
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestedFirstName String           @map("requested_first_name")
+  requestedLastName  String           @map("requested_last_name")
+  currentFirstName   String           @map("current_first_name")
+  currentLastName    String           @map("current_last_name")
+  status             NameChangeStatus @default(pending)
+  reviewedById       String?          @map("reviewed_by_id")
+  reviewedBy         User?            @relation("NameChangeReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewNote         String?          @map("review_note")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([status])
+  @@index([tenantId])
+  @@map("name_change_requests")
+}
+
+// ============================================================================
+// §16 Dynamic Roles + RBAC (Phase 6)
+// ============================================================================
+// `Role` rows define a named permission set the admin can edit at runtime.
+// 5 "system" roles (student/professor/ta/sa/admin) are seeded and cannot
+// be deleted; admins can create additional custom roles for finer-grained
+// access control. `User.role` enum is preserved as a denormalized primary
+// role so existing `requireRole(...)` checks keep working without rewriting
+// all 10 servers; the UserRoleAssignment join is the additive source-of-truth
+// for permission enforcement.
+//
+// permissions JSON shape (per role):
+//   {
+//     "Student Management": { "read": true, "write": false, "delete": false },
+//     "Course Management":  { "read": true, "write": true,  "delete": false },
+//     ...
+//   }
+
+model Role {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  // Plan 5 — scope discriminator used by requireScope() in backend/lib/auth.js.
+  // One of: 'financial' | 'it' | 'admin' | 'professor' | 'ta' | 'sa' |
+  // 'student' | 'custom'. Admin is the implicit superset of the two admin
+  // sub-scopes (financial/it). The `superuser` sub-role was removed in Plan 22.
+  scope       String   @default("custom")
+  description String?
+  // System roles (the original 5 + 2 admin sub-scopes) cannot be renamed or
+  // deleted. Custom roles created via the admin UI have isSystem = false.
+  isSystem    Boolean  @default(false) @map("is_system")
+  permissions Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  assignments UserRoleAssignment[]
+
+  @@unique([tenantId, name])
+  @@index([scope])
+  @@index([tenantId])
+  @@map("roles")
+}
+
+model UserRoleAssignment {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String   @map("user_id")
+  roleId     String   @map("role_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@index([tenantId])
+  @@map("user_role_assignments")
+}
+
+// ============================================================================
+// Plan 5 — Per-user permission overrides, login locks, manual enrollments
+// ============================================================================
+//
+// These three tables underpin the admin power tools described in
+// docs/plan-5.md. They are intentionally independent of the existing Role
+// model so a future migration can drop the JSON `Role.permissions` blob
+// without touching this surface.
+
+// Per-user permission overrides — Notes line 70.
+//
+// NULL on can_read/can_write/can_delete means "inherit from role". Stored
+// even when redundant with role values so the audit trail is unambiguous.
+model UserPermissionOverride {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  category  String
+  canRead   Boolean? @map("can_read")
+  canWrite  Boolean? @map("can_write")
+  canDelete Boolean? @map("can_delete")
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user    User  @relation("PermissionOverrideUser", fields: [userId], references: [id], onDelete: Cascade)
+  creator User? @relation("PermissionOverrideCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@unique([userId, category])
+  @@index([userId])
+  @@index([tenantId])
+  @@map("user_permission_overrides")
+}
+
+// Login lock targets + time windows — Notes line 108.
+//
+// `targetKind` is one of:
+//   - 'user'       (targetId = User.id)
+//   - 'level'      (targetId = academic level as text, e.g. '1')
+//   - 'department' (targetId = Department.id)
+//   - 'role'       (targetId = UserRole enum value, e.g. 'student')
+//   - 'program'    (targetId = Department.code for the FCDS programs)
+//
+// `isTimeWindow=true`  => lock is ACTIVE outside [openFrom, openTo].
+// `isTimeWindow=false` => lock active until `expiresAt` (NULL = forever).
+model LoginLock {
+  id           String    @id @default(cuid())
+  tenantId     String    @map("tenant_id")
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  targetKind   String    @map("target_kind")
+  targetId     String    @map("target_id")
+  reason       String
+  isTimeWindow Boolean   @default(false) @map("is_time_window")
+  openFrom     DateTime? @map("open_from")
+  openTo       DateTime? @map("open_to")
+  expiresAt    DateTime? @map("expires_at")
+  createdBy    String?   @map("created_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  releasedAt   DateTime? @map("released_at")
+  releasedBy   String?   @map("released_by")
+
+  creator  User? @relation("LoginLockCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  releaser User? @relation("LoginLockReleaser", fields: [releasedBy], references: [id], onDelete: SetNull)
+
+  @@index([targetKind, targetId])
+  @@index([releasedAt])
+  @@index([tenantId])
+  @@map("login_locks")
+}
+
+// Manual enrollment audit trail — Notes line 110.
+//
+// Each row pairs a `Registration` with the bypass reason and the list of
+// gates the admin chose to skip (prereq/level/window/credit_cap/capacity/
+// semester/advisor). One-row-per-registration enforced by the FK.

@@ -1,0 +1,94 @@
+{
+  "name": "uniflow-portal-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@capacitor-mlkit/barcode-scanning": "^8.1.0",
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/camera": "^8.2.0",
+    "@capacitor/cli": "^8.1.0",
+    "@capacitor/core": "^8.1.0",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.1.0",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/push-notifications": "^8.1.1",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.2",
+    "@excalidraw/excalidraw": "^0.18.1",
+    "@livekit/components-react": "^2.9.21",
+    "@livekit/components-styles": "^1.2.0",
+    "@stripe/stripe-js": "^9.6.0",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^13.5.0",
+    "@types/jest": "^27.5.2",
+    "@types/node": "^16.18.126",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@types/react-helmet": "^6.1.11",
+    "@types/react-router-dom": "^5.3.3",
+    "axios": "^1.15.1",
+    "chart.js": "^4.5.1",
+    "firebase": "^11.10.0",
+    "framer-motion": "^12.33.0",
+    "gsap": "^3.14.2",
+    "jspdf": "^4.1.0",
+    "jspdf-autotable": "^5.0.7",
+    "jsqr": "^1.4.0",
+    "livekit-client": "^2.19.0",
+    "ogl": "^1.0.11",
+    "phosphor-react": "^1.4.1",
+    "react": "^19.2.0",
+    "react-chartjs-2": "^5.3.1",
+    "react-dom": "^19.2.0",
+    "react-helmet": "^6.1.0",
+    "react-is": "^19.2.7",
+    "react-router-dom": "^7.10.1",
+    "react-scripts": "5.0.0",
+    "recharts": "^3.5.1",
+    "socket.io-client": "^4.8.3",
+    "uniflow-college-portal": "file:..",
+    "web-vitals": "^2.1.4"
+  },
+  "scripts": {
+    "start": "craco start",
+    "build": "craco build",
+    "test": "craco test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@craco/craco": "^7.1.0",
+    "@tailwindcss/postcss": "^4.1.17",
+    "@types/d3-dispatch": "^3.0.0",
+    "autoprefixer": "^10.4.22",
+    "postcss": "^8.5.6",
+    "sharp": "^0.34.5",
+    "tailwindcss": "^3.4.18",
+    "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "rimraf": "^5.0.10",
+    "glob": "^10.4.5"
+  }
+}

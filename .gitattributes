@@ -1,0 +1,42 @@
+# =============================================================================
+# UniFlow — Line-ending rules
+# =============================================================================
+#
+# Everything text-by-default uses normalized LF in the repo. The .sh scripts
+# that ship into Linux containers (postgres replica entrypoint, init-replicator)
+# MUST stay LF on Windows checkouts too — otherwise the shebang fails inside
+# the container with "bad interpreter: No such file or directory".
+#
+# The Dockerfiles, nginx confs, postgresql.conf, and yaml/json configs that
+# get mounted into containers benefit from LF as well.
+
+# Default: auto-detect text, normalize to LF on commit.
+* text=auto eol=lf
+
+# Force LF for files that ship into Linux containers.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+Dockerfile.* text eol=lf
+*.dockerfile text eol=lf
+*.conf      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+fly.toml    text eol=lf
+
+# Binary types — never touch line endings.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.svg   text
+*.pdf   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.jks   binary
+*.keystore binary

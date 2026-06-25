@@ -1,0 +1,139 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build output
+frontend/build/
+build/
+dist/
+dist-fly/
+dist-v2/
+dist-v3/
+dist-v4/
+dist-v5/
+dist-v6/
+dist-v7/
+dist-v8/
+dist-v9/
+
+# Capacitor / Android
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/.idea/
+android/captures/
+
+# Capacitor — generated artifacts inside the native projects.
+# (frontend/build is copied here by `cap sync`; don't track the duplicate.)
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+
+# Capacitor — Firebase credentials, NEVER commit these.
+android/app/google-services.json
+ios/App/App/GoogleService-Info.plist
+
+# Capacitor — Android signing keystore (generate locally; never commit).
+android/app/release-key.jks
+android/app/keystore.properties
+
+# iOS
+ios/App/build/
+ios/App/Pods/
+ios/App/Podfile.lock
+ios/DerivedData/
+
+# Environment — never commit real secrets. The .example variants ARE tracked.
+.env
+.env.*
+!.env.example
+!.env.docker.example
+!.env.production.example
+
+# Claude per-user settings (PAT, deploy commands, etc.)
+.claude/settings.local.json
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tooling caches
+.gemini/
+.qodo/
+.cache/
+.parcel-cache/
+
+# Prisma generated artifacts (regenerated locally)
+backend/prisma/migrations/*/migration.sql.bak
+
+# Uploads created at runtime by multer (course-content, student-affairs, user-profile avatars, chat photos, attendance excuses)
+backend/servers/course-content/uploads/
+backend/servers/student-affairs/uploads/
+backend/servers/user-profile/uploads/
+backend/servers/chat/uploads/
+backend/servers/attendance/uploads/
+
+# Mock DB used by mock-email-api (legacy — tracked because AuthPage.tsx
+# still imports it; runtime writes by mock-email-api.js will show as
+# local diff. Real auth lives at backend/servers/user-profile/.)
+
+# Chatbot embedding cache (large; regenerated via npm run chatbot:embed)
+backend/corpus/embeddings.json
+
+# Phase 12 — pg_dump output. Per-environment, retention 30d, never tracked.
+backend/backups/
+
+# Plan 13 — Chatbot test harness per-run reports. Each run produces a JSON
+# report + CSV of failures; baselines (one frozen copy) live in
+# `backend/tests/chatbot/baseline.json` and ARE tracked. Day-to-day reports
+# are noisy; gitignored. Keep the .gitkeep so the directory exists in fresh
+# clones (the harness writes into it).
+backend/tests/chatbot/reports/*.json
+backend/tests/chatbot/reports/*.csv
+!backend/tests/chatbot/reports/.gitkeep
+
+# Plan 22 Phase 3 — Playwright e2e artifacts (re-generated per run).
+test-results/
+playwright-report/
+e2e/.auth/
+blob-report/
+playwright/.cache/
+
+# Plan 22 Phase 5 — Electron build outputs.
+electron/dist/
+# dist/ already ignored above (catches packaged installers + builder cache).
+# AWS-pointed installer output dir.
+dist-aws/
+dist-fly/
+
+# AWS deploy artefacts — NEVER commit. The PEM is the prod SSH key; the
+# .tar.gz / .b64 are ad-hoc seed backups copied off the prod host.
+uniflow-key.pem
+*.pem
+fly-announcements.b64
+announcements.tar.gz
+e2e/screenshots/
+docs/thesis-build/UniFlow-Documentation.docx
+docs/thesis-build/_*.txt
+
+# Firebase client config — not committed
+google-services.json
+
+
+# Prisma migrations not committed — build the DB from schema.prisma (npx prisma migrate dev --name init / npx prisma db push)
+backend/prisma/migrations/
